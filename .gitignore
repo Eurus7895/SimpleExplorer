@@ -216,3 +216,26 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ── Node ──
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# ── Neutralinojs ──
+bin/
+dist/
+src/neutralino.js
+.tmp/
+
+# ── Editor / OS ──
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
