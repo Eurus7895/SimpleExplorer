@@ -1,6 +1,6 @@
 #requires -Version 5.0
 #
-# scripts/run.ps1 — one-command setup + launch.
+# scripts/run.ps1 - one-command setup + launch.
 #
 # Idempotent: skips work that's already done.
 #   1. npm install        (if node_modules missing)
@@ -10,7 +10,7 @@
 #                          claude/implement-simple-explorer-SxdNe scratch
 #                          branch (see docs/roadmap.md).
 #   3. build shellhelp.exe (if missing or older than tools/shellhelp.cpp)
-#                          — needs MSVC `cl`. Skipped with warning if absent.
+#                          - needs MSVC `cl`. Skipped with warning if absent.
 #   4. neu run            (start the app)
 #
 # Usage from any cwd:
@@ -39,7 +39,7 @@ function Restore-VendoredRuntime {
     # Pulls bin/neutralino-win_x64.exe + src/neutralino.js out of the
     # claude/implement-simple-explorer-SxdNe scratch branch, where they
     # are intentionally vendored as a corporate-proxy workaround. The
-    # files land in the worktree only — they are not staged or committed.
+    # files land in the worktree only - they are not staged or committed.
     $branch = 'claude/implement-simple-explorer-SxdNe'
     if (-not (Has-Cmd git)) { return $false }
     Write-Host "==> falling back to vendored runtime from origin/$branch"
@@ -54,16 +54,16 @@ function Restore-VendoredRuntime {
 
 $needsRuntime = (-not (Test-Path 'bin/neutralino-win_x64.exe')) -or (-not (Test-Path 'src/neutralino.js'))
 if ($needsRuntime) {
-    Write-Host "==> Neutralino runtime missing — running 'neu update'"
+    Write-Host "==> Neutralino runtime missing - running 'neu update'"
     npm run setup
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "'neu update' failed (commonly: corporate proxy blocking github.com)."
         if (-not (Restore-VendoredRuntime)) {
-            Write-Error "Could not obtain Neutralino runtime via 'neu update' OR vendored fallback. See docs/roadmap.md → 'Vendored Neutralino runtime'."
+            Write-Error "Could not obtain Neutralino runtime via 'neu update' OR vendored fallback. See docs/roadmap.md - 'Vendored Neutralino runtime'."
             exit 1
         }
     } elseif (-not (Test-Path 'src/neutralino.js')) {
-        # 'neu update' completed but didn't produce src/neutralino.js — older
+        # 'neu update' completed but didn't produce src/neutralino.js - older
         # CLI versions only fetch the binary. Backfill from the scratch branch.
         if (-not (Restore-VendoredRuntime)) {
             Write-Error "'neu update' did not produce src/neutralino.js, and the vendored fallback also failed."
