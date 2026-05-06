@@ -54,7 +54,7 @@ function titleBar(ctx) {
     </button>
     <div class="a-wincontrols">
       <span class="a-winctl" data-winctl="min" title="Minimize">─</span>
-      <span class="a-winctl" data-winctl="max" title="Maximize">☐</span>
+      <span class="a-winctl a-winctl--disabled" title="Use the OS title bar to maximize (frameless mode lands in Phase 7)">☐</span>
       <span class="a-winctl a-winctl--close" data-winctl="close" title="Close">✕</span>
     </div>
   `;

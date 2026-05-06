@@ -172,9 +172,12 @@ kbd {
 .a-wincontrols { display: flex; }
 .a-winctl {
   width: 36px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
-  font-size: 10px; color: var(--text-mute); cursor: default;
+  font-size: 10px; color: var(--text-mute); cursor: pointer;
 }
+.a-winctl:hover { background: var(--hover); }
 .a-winctl--close:hover { background: #c42b1c; color: #fff; }
+.a-winctl--disabled { opacity: 0.35; cursor: not-allowed; }
+.a-winctl--disabled:hover { background: transparent; }
 
 .a-cmdbar {
   display: flex; align-items: center; gap: 4px;
