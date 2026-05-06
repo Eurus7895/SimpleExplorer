@@ -52,7 +52,7 @@ if ($needsBuild) {
         New-Item -ItemType Directory -Force -Path extras | Out-Null
         Push-Location tools
         try {
-            & cl /nologo /EHsc /O2 /utf-8 shellhelp.cpp /link shell32.lib ole32.lib
+            & cl /nologo /EHsc /O2 /utf-8 shellhelp.cpp /link shell32.lib ole32.lib user32.lib
             $rc = $LASTEXITCODE
         } finally {
             Pop-Location
