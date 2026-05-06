@@ -106,13 +106,26 @@ function render() {
     railTarget,
     async onWinCtl(kind) {
       const N = window.Neutralino; if (!N) return;
-      try {
-        if (kind === 'min') await N.window.minimize();
-        else if (kind === 'max') {
-          const m = await N.window.isMaximized();
-          if (m) await N.window.unmaximize(); else await N.window.maximize();
-        } else if (kind === 'close') await N.app.exit();
-      } catch (e) { console.warn('window control failed:', kind, e); }
+      // Each call wrapped individually — Neutralino 5.6.0 with the default
+      // (non-frameless) window mode can race with the OS title bar and
+      // leave the window in a degenerate state if these throw mid-toggle.
+      // The OS title bar still has its own ☐ / ─ / ✕, so on failure the
+      // user can recover from there.
+      if (kind === 'min') {
+        try { await N.window.minimize(); }
+        catch (e) { console.warn('window.minimize failed:', e); }
+      } else if (kind === 'max') {
+        // Always maximize — let the OS title bar handle un-maximize.
+        // The previous isMaximized() / unmaximize() toggle could send the
+        // window off-screen on multi-monitor / HiDPI setups.
+        try {
+          await N.window.maximize();
+          await N.window.show(); // safety net in case maximize hid us
+        } catch (e) { console.warn('window.maximize failed:', e); }
+      } else if (kind === 'close') {
+        try { await N.app.exit(); }
+        catch (e) { console.warn('app.exit failed:', e); }
+      }
     },
     setActivePane(i) {
       // No-op when already active — re-rendering on every row click was
