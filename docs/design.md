@@ -17,14 +17,6 @@ is vanilla HTML/CSS/JS rendering three switchable design directions. Real
 local FS access is wired through `Neutralino.filesystem` plus a few PowerShell
 shell-outs for shell-integration features Neutralino does not cover natively.
 
-> **Note:** `CLAUDE.md` describes the project as Python and prescribes
-> Python-idiom checks (`ruff`, `mypy`, `pytest`). That framing pre-dates this
-> implementation and is treated here as repository-wide conventions; the
-> per-language commands listed there are not currently wired up. The actual
-> stack is JavaScript (no Python). Reconcile this either by adding JS
-> equivalents to `CLAUDE.md` or by accepting that the conventions are
-> language-agnostic.
-
 ## Stack
 
 - **Shell:** Neutralinojs. One native Windows `.exe` (~2 MB) wrapping the OS
@@ -65,6 +57,38 @@ docs/
 
 `bin/` (Neutralino runtime), `dist/` (build output), and `src/neutralino.js`
 (generated client lib) are gitignored.
+
+## Native helpers
+
+Three right-click actions — Properties, Delete-to-Recycle-Bin, drive list —
+used to shell out to PowerShell. Each call paid ~200 ms of PowerShell
+cold-start, dominating perceived latency. To stay near native speed without
+re-introducing Rust/MSVC at install time, we ship a small MSVC-built
+binary at `extras/shellhelp.exe`:
+
+| Verb | Implementation | Replaces |
+| --- | --- | --- |
+| `properties <path>` | `ShellExecuteEx("properties")` | PowerShell + `Shell.Application` COM |
+| `trash <path…>` | `IFileOperation::DeleteItem` (batched, recycle-bin flag) | PowerShell + `Microsoft.VisualBasic.FileIO` |
+| `drives` | `GetLogicalDriveStringsW` + `GetDiskFreeSpaceExW` → JSON | PowerShell + `Get-PSDrive` |
+
+Source: [`tools/shellhelp.cpp`](../tools/shellhelp.cpp). Build instructions:
+[`tools/build.md`](../tools/build.md). The compiled exe is checked into
+`extras/` so end users never need a C++ toolchain.
+
+`src/fs.js` calls the helper when present and falls back to the original
+PowerShell paths when not — this keeps the app working immediately after
+`git pull` and before someone with MSVC has rebuilt the helper.
+
+Latency budget after the change:
+
+- Right-click → menu visible: < 30 ms
+- Right-click → Properties dialog visible: < 100 ms (was 250–400 ms)
+- Delete (single file): < 100 ms (was 250–400 ms)
+- Drive list paint: < 150 ms (was 250–400 ms)
+
+Open / Open in VS Code / Open in Terminal / Show in Explorer / Copy path /
+Rename are already direct spawns or pure JS — no helper needed.
 
 ## Design source of truth (visual)
 

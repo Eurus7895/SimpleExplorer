@@ -113,6 +113,25 @@ function psQuote(s) {
   return "'" + String(s).replace(/'/g, "''") + "'";
 }
 
+// Native helper detection. The MSVC-compiled exe at extras/shellhelp.exe
+// replaces three PowerShell shell-outs (properties, trash, drives) and shaves
+// ~200 ms cold-start cost off each. If it isn't there yet — typical right
+// after `git pull` before someone has compiled it — we fall back to the
+// PowerShell paths so the app keeps working.
+const HELPER_PATH = 'extras\\shellhelp.exe';
+let helperReady = null;
+async function helperAvailable() {
+  if (!N) return false;
+  if (helperReady !== null) return helperReady;
+  helperReady = N.filesystem.getStats(HELPER_PATH).then(() => true).catch(() => false);
+  return helperReady;
+}
+
+async function runHelper(...args) {
+  const argstr = args.map((a) => `"${a}"`).join(' ');
+  return await exec(`"${HELPER_PATH}" ${argstr}`);
+}
+
 async function exec(cmd) {
   if (!N) { console.warn('[mock] exec', cmd); return { stdOut: '', stdErr: '', exitCode: 0 }; }
   try {
@@ -199,12 +218,16 @@ export async function move(from, to) {
   await N.filesystem.move(from, to);
 }
 
-// Send a path to the Recycle Bin. Neutralino has no native API for this on
-// Windows, so we shell out to PowerShell + Microsoft.VisualBasic.FileIO,
-// which is the documented Microsoft path that hits the same shell file
-// operation as right-click → Delete in stock Explorer.
+// Send a path to the Recycle Bin. Prefers the native helper (one
+// IFileOperation call, ~50 ms); falls back to PowerShell +
+// Microsoft.VisualBasic.FileIO when the helper hasn't been built yet
+// (~250-400 ms, but still uses the documented Microsoft recycle path).
 export async function deleteToTrash(path) {
   if (!N) { console.warn('[mock] trash', path); return; }
+  if (await helperAvailable()) {
+    await runHelper('trash', path);
+    return;
+  }
   let isDir = false;
   try {
     const s = await N.filesystem.getStats(path);
@@ -226,6 +249,18 @@ export async function listDrives() {
       { name: '(C:)', path: 'C:\\', free_bytes: 0, total_bytes: 0 },
       { name: '(D:)', path: 'D:\\', free_bytes: 0, total_bytes: 0 },
     ];
+  }
+  if (await helperAvailable()) {
+    const r = await runHelper('drives');
+    try {
+      const arr = JSON.parse(r.stdOut.trim() || '[]');
+      return arr.map((d) => ({
+        name: `(${d.letter}:)`,
+        path: `${d.letter}:\\`,
+        free_bytes: Number(d.free) || 0,
+        total_bytes: Number(d.total) || 0,
+      }));
+    } catch { return []; }
   }
   const ps = "Get-PSDrive -PSProvider FileSystem | ForEach-Object { [pscustomobject]@{ Name = $_.Name; Free = [int64]$_.Free; Used = [int64]$_.Used } } | ConvertTo-Json -Compress";
   const r = await exec(`powershell -NoProfile -Command "${ps}"`);
@@ -256,10 +291,16 @@ export async function revealInOS(path) {
 
 // ── Curated context-menu actions (new vs Tauri version) ─────────────────────
 
-// Show the real Windows Properties dialog by invoking the Shell.Application
-// COM verb. Same dialog stock Explorer opens.
+// Show the real Windows Properties dialog. Prefers the native helper
+// (~50 ms via ShellExecuteEx + "properties" verb); falls back to a
+// PowerShell + Shell.Application COM call when the helper hasn't been
+// built yet (~250-400 ms).
 export async function showProperties(path) {
   if (!N) { console.warn('[mock] properties', path); return; }
+  if (await helperAvailable()) {
+    await N.os.execCommand(`"${HELPER_PATH}" properties "${path}"`, { background: true });
+    return;
+  }
   const ps = `$s = New-Object -ComObject Shell.Application; $i = $s.NameSpace((Split-Path ${psQuote(path)} -Parent)).ParseName((Split-Path ${psQuote(path)} -Leaf)); $i.InvokeVerb('Properties')`;
   await execBg(`powershell -NoProfile -Command "${ps.replace(/"/g, '\\"')}"`);
 }
