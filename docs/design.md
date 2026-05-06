@@ -3,6 +3,8 @@
 Single source of truth for current status, architecture, and conventions
 specific to this codebase. See [`../CLAUDE.md`](../CLAUDE.md) for repository-
 wide AI-assistant conventions (branch discipline, Conventional Commits, etc.).
+Forward-looking work — what's painted but not wired, and what's deferred —
+lives in [`./roadmap.md`](./roadmap.md).
 
 ## North star
 

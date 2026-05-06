@@ -112,6 +112,10 @@ export function renderRows(state, opts = {}) {
     row.append(nameCell, sizeCell, modCell, kindCell);
 
     row.addEventListener('click', (e) => {
+      // Don't bubble to the pane card — the card's click handler triggers
+      // setActivePane → render(), which would tear the row out from under
+      // an in-progress double-click and silently swallow it.
+      e.stopPropagation();
       if (e.shiftKey || e.metaKey || e.ctrlKey) {
         if (state.selected.has(it.name)) state.selected.delete(it.name);
         else state.selected.add(it.name);

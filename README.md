@@ -7,7 +7,8 @@ real local filesystem access, no Rust toolchain, no Electron.
 
 Conventions for AI-assisted development live in [`CLAUDE.md`](./CLAUDE.md).
 Project architecture and current status live in
-[`docs/design.md`](./docs/design.md).
+[`docs/design.md`](./docs/design.md). Backlog and unwired-button audit
+live in [`docs/roadmap.md`](./docs/roadmap.md).
 
 ## Getting Started
 

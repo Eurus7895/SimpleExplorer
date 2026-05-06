@@ -79,7 +79,14 @@ function render() {
     layoutDef: LAYOUTS[settings[dir.layoutKey]] || LAYOUTS['2v'],
     panes,
     activePane,
-    setActivePane(i) { activePane = i; render(); },
+    setActivePane(i) {
+      // No-op when already active — re-rendering on every row click was
+      // tearing down the row mid-double-click, so the dblclick event lost
+      // its target and "open folder" silently failed.
+      if (i === activePane) return;
+      activePane = i;
+      render();
+    },
     setDirection(d) { settings.direction = d; saveSettings(); render(); },
     setTheme(t) { settings[dir.themeKey] = t; saveSettings(); render(); },
     setLayout(l) { settings[dir.layoutKey] = l; saveSettings(); render(); },
