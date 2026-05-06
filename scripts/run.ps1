@@ -25,7 +25,7 @@ if (-not (Has-Cmd node)) {
     Write-Error "Node.js not found on PATH. Install from https://nodejs.org and retry."
 }
 
-if (-not (Test-Path node_modules)) {
+if (-not (Test-Path 'node_modules/.bin/neu.cmd') -and -not (Test-Path 'node_modules/.bin/neu')) {
     Write-Host "==> npm install"
     npm install
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
