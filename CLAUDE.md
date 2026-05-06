@@ -11,7 +11,11 @@ SimpleExplorer is a Neutralinojs Windows desktop app (vanilla HTML/CSS/JS
 frontend, ~2 MB native shell, one MSVC-built helper exe for Shell COM
 calls); this file fixes the rules an assistant must follow when reading,
 editing, branching, and committing here. Per-project architecture and
-status live in [`docs/design.md`](./docs/design.md).
+status live in [`docs/design.md`](./docs/design.md); the
+implementation plan, MVP audit, and phased backlog live in
+[`docs/roadmap.md`](./docs/roadmap.md) — read it before starting any
+new feature so the work fits the existing plan instead of inventing a
+new one.
 
 ## Hard Invariants
 
@@ -94,6 +98,11 @@ create empty directories just to match the layout.
 - **Memory:** `.github/memory/{MEMORY.md, architecture.md, failure-patterns.md}`
 - **Design / status:** `docs/design.md` is the single source of truth for
   current status; do not duplicate status into READMEs or footers.
+- **Implementation plan / backlog:** `docs/roadmap.md` is the canonical
+  list of what's painted-but-not-wired, what's deferred, and the phased
+  plan for upcoming work. New features go through this file first
+  (sized, ordered, written down) before any code lands. Update it when
+  a phase ships.
 
 ### Adding Things
 

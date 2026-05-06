@@ -94,46 +94,179 @@ These render and look right, but clicking them does nothing today:
 > Properties, …) — i.e. every installed shell extension, not the
 > curated short list we ship today.
 
-Implementation:
+#### Approach
 
-1. Extend `tools/shellhelp.cpp` with two verbs:
-   - `menu <path>` — walk the shell namespace from the given path,
-     `IShellFolder::GetUIObjectOf` → `IContextMenu::QueryContextMenu`,
-     iterate command IDs via `GetCommandString` for verb names + display
-     strings, build a JSON tree (entries can be separators, submenus,
-     or leaf items). Print to stdout.
-   - `invoke <path> <commandId>` — same setup, then
-     `IContextMenu::InvokeCommand` with the chosen verb. Returns 0 on
-     success.
-2. JS side: replace the static `items` array in `pane.js`
-   `showContextMenu()` with an async fetch — call `helper('menu', path)`,
-   parse JSON, render the menu including submenus on hover. Add the
-   curated SimpleExplorer items (Open in pane, Compare panes) at the
-   top so they're always available even on shell-extension-poor systems.
-3. Click handler routes to either:
-   - The local `doAction()` for SimpleExplorer-only verbs.
-   - `helper('invoke', path, commandId)` for shell-extension verbs.
-4. Cache the menu JSON per file path for a few seconds to avoid
-   re-walking COM on rapid right-clicks of the same file.
-5. Multi-file selection: `IContextMenu` accepts an array of PIDLs.
-   Extend the helper to take multiple paths and emit the union menu.
+Extend the existing native helper (`tools/shellhelp.cpp` →
+`extras/shellhelp.exe`) with two new verbs that wrap COM
+`IContextMenu`, and replace the static JS menu with an async fetch of
+the helper's JSON.
 
-Risks / gotchas:
+```
+shellhelp menu <path> [<path> …]      → JSON tree of menu entries to stdout
+shellhelp invoke <id> <path> [<path>…] → invoke command id on path(s)
+```
 
-- Some shell extensions do extra work (icon loading, dynamic labels)
-  that can stall the menu walk. Render the curated items immediately
-  and append shell entries as they arrive; don't block on them.
-- Some extensions only register for specific file types — the helper
-  must inspect file extension / folder vs file before invoking
-  `IShellFolder` properly.
-- Icons (the colored leading icons in the screenshot) come from
-  `IContextMenu::GetCommandString` + `IExtractIcon`. Optional v1; ship
-  text-only first, icons in a follow-up.
+`menu` walks `IShellFolder` from the parent dir, calls `GetUIObjectOf`
+to obtain `IContextMenu`, then `QueryContextMenu` into an `HMENU` and
+introspects each entry. For submenus (`MFT_SUBMENU`), recursively
+expand. Output is JSON for tractable parsing.
 
-Once shipped, the curated right-click in `pane.js` shrinks to a few
-SimpleExplorer-specific actions; everything else (Properties, Open with
-Code, Cut, Copy, Send to, Delete, Rename, third-party shell extensions)
-flows through the helper.
+`invoke` rebuilds the same `IContextMenu` and calls `InvokeCommand`
+with the chosen verb id. Path is required so the helper can rebuild
+the COM object (no shared state between calls).
+
+#### Files affected
+
+**Modified**
+
+- **`tools/shellhelp.cpp`** — add ~150 lines for `menu` + `invoke`.
+  Skeleton:
+
+  ```cpp
+  static HRESULT build_context_menu(int n, wchar_t** paths,
+                                    IContextMenu** out_cm,
+                                    HMENU* out_hm);
+  static int verb_menu(int argc, wchar_t** argv);
+  static int verb_invoke(int argc, wchar_t** argv);
+  ```
+
+  - `build_context_menu` resolves each path to an `IShellItem`, gets
+    the parent `IShellFolder`, and aggregates child PIDLs into one
+    `GetUIObjectOf` call so multi-select acts on the union (matches
+    Explorer behavior).
+  - `verb_menu` calls `QueryContextMenu(hm, 0, MIN_ID, MAX_ID,
+    CMF_NORMAL | CMF_EXTENDEDVERBS)` and walks the `HMENU`. For each
+    item: read text via `GetMenuStringW`, the verb id via
+    `GetMenuItemID`, the canonical verb via
+    `IContextMenu::GetCommandString(id, GCS_VERBW, …)`, recurse into
+    submenus via `GetSubMenu`. Emit JSON like:
+
+    ```json
+    [
+      { "id": 1,    "label": "Open",            "verb": "open" },
+      { "id": 0,    "label": "",                "separator": true },
+      { "id": null, "label": "7-Zip",
+        "submenu": [{"id": 102, "label": "Add to archive…", "verb": "..."}] }
+    ]
+    ```
+
+  - `verb_invoke` rebuilds the menu (cheap on a warm process,
+    necessary because the HMENU is stateful) and calls
+    `InvokeCommand` with `CMINVOKECOMMANDINFOEX` — pass the parent
+    HWND, verb id, and `nShow = SW_SHOWNORMAL`.
+
+- **`src/fs.js`** — add `helperMenu(paths)` and `helperInvoke(id,
+  paths)` thin wrappers over `helperAvailable()` + `runHelper()`.
+  Mock fallback returns the static curated list so the in-browser
+  preview still works.
+
+- **`src/pane.js`** — rewrite `showContextMenu(x, y, entry)`:
+  1. Always render the curated SimpleExplorer items (Open in pane,
+     Compare panes, Copy path) at the top — these are *ours*, not
+     the OS's, and they don't show up in `IContextMenu`.
+  2. After the curated items, render a `Loading…` placeholder.
+  3. `await helperMenu([paths])`. On success, replace placeholder
+     with the parsed JSON. On failure (or when the helper isn't
+     compiled), fall back to today's static list.
+  4. Submenus open on hover after a 200 ms delay (standard Windows
+     menu behavior). Render position auto-flips to the left when a
+     submenu would overflow the viewport.
+  5. Click handler: SimpleExplorer items route to `doAction()`;
+     shell-extension items call `helperInvoke(id, paths)` and
+     dismiss the menu.
+
+  Add a small in-memory cache keyed by `paths.join('\0')` with a
+  3-second TTL so repeated right-clicks of the same item don't
+  re-walk COM.
+
+- **`docs/design.md`** — extend the "Native helpers" table to list
+  the two new verbs alongside `properties`, `trash`, `drives`. Note
+  that the curated items still live in the JS menu and explain why.
+
+- **`docs/roadmap.md`** — once landed, move this Phase 1.5 entry to
+  a "shipped" section.
+
+**Untouched**
+
+- `src/app.js` — the right-click → `doAction()` plumbing is already
+  generic (`document.dispatchEvent('explorer:action', { detail })`);
+  shell-extension invocations bypass it and call `helperInvoke`
+  directly from inside the menu's click handler.
+
+#### Verification
+
+1. Helper rebuild: `cd tools && cl /nologo /EHsc /O2 /utf-8
+   shellhelp.cpp /link shell32.lib ole32.lib`. Confirm exe < 100 KB.
+2. `shellhelp menu "C:\Workspace\11_AI\SimpleExplorer\README.md"` →
+   JSON includes Open, Cut, Copy, Send to, Properties, plus locally
+   installed extensions (Open with Code, Git Bash, 7-Zip, TortoiseSVN).
+3. `shellhelp invoke <id> "<path>"` invokes the chosen verb.
+4. End-to-end in app: right-click a file. Curated items render in
+   < 50 ms; shell extensions fill in < 300 ms typical.
+5. Multi-select: 3 files → menu matches stock Explorer's 3-file
+   menu (subset; multi-incompatible entries hidden). `Send to →
+   Compressed folder` produces a single zip.
+6. Submenus: hover `Send to` / `7-Zip`, expand after ~200 ms.
+7. Perf budget: first paint < 50 ms; shell fill < 300 ms typical,
+   < 1 s worst case.
+8. Fresh Windows box without 3rd-party extensions: still has OS
+   defaults plus curated items.
+9. Mock mode (`src/index.html` opened in a browser): curated list
+   still renders, no helper required.
+
+#### Risks / gotchas
+
+- **Hangy shell extensions.** Some 3rd-party extensions do I/O or
+  RPC during `QueryContextMenu` and can stall multi-second. The
+  helper must run with a watchdog (timeout → return partial results
+  after 1 s). If a single extension consistently blocks, expose a
+  per-CLSID skip-list in `neutralino.config.json`.
+- **Icons.** The user's screenshot shows colored icons next to each
+  entry. These come from `IExtractIconW` keyed off the registered
+  CLSID. Optional v1 — ship text-only first. Followup: helper emits
+  base64-encoded 16×16 PNG per item, JS renders inline.
+- **Per-file-type menus.** `IContextMenu` returns different items
+  for files vs folders vs drives. The helper must always go through
+  `IShellFolder` from the *parent* (folder containing the item)
+  rather than parsing the item directly, or many extensions don't
+  appear.
+- **Elevation.** Some verbs (e.g. "Run as administrator") trigger
+  UAC. `InvokeCommand` handles this transparently — Windows shows
+  the consent prompt — but the helper must use
+  `CMIC_MASK_FLAG_NO_UI = 0` (allow UI) for those to surface.
+- **Custom verbs without ASCII names.** Use `GetCommandString` with
+  `GCS_VERBW` (wide variant). Some shell extensions return
+  `E_NOTIMPL` for `GetCommandString` — fall back to invoking by
+  numeric id.
+- **Menu walk vs invoke pairing.** The HMENU + IContextMenu pair is
+  stateful per `QueryContextMenu` call. After enumerating, free
+  with `DestroyMenu`. For invoke, rebuild fresh — don't try to
+  share state between the two helper invocations.
+
+#### Order of work when implementation resumes
+
+1. Add `verb_menu` to `shellhelp.cpp`, no submenu support yet.
+   Smoke test against a few file types.
+2. Add submenu recursion + the JSON tree shape.
+3. Wire `helperMenu` in `fs.js` + the loading-then-fill flow in
+   `pane.js`. Test live.
+4. Add `verb_invoke`. Wire click handler in `pane.js`.
+5. Add multi-select union.
+6. Add the 3-second TTL cache.
+7. Add the watchdog timeout for hangy extensions.
+8. Update `docs/design.md` and move this entry to "shipped".
+9. (Optional) icons — only if time permits.
+
+#### Out of scope (this phase)
+
+- Drag-and-drop into / from stock Explorer.
+- Persistent context-menu state (remembering expanded submenus).
+- Keyboard navigation (arrow keys / Enter). Add later.
+- Custom theming of shell-extension icons / labels — ship them as
+  the OS provides.
+- Full `IContextMenu3` features (themed background, owner-draw).
+  Use `IContextMenu` (universally supported); upgrade only if
+  specific extensions misbehave.
 
 ### Phase 1 — Stop the "buttons don't work" feel (1–2 hours, one commit)
 
