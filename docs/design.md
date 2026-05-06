@@ -28,12 +28,14 @@ shell-outs for shell-integration features Neutralino does not cover natively.
 
 ## Run / build
 
-- `npm install` (once) — only dev dep is `@neutralinojs/neu`.
-- `npm run setup` — one-time: downloads Neutralino runtime binaries to `bin/`.
-- `npm run dev` — opens the app with hot reload of `src/`.
-- `npm run build` — produces `dist/simpleexplorer/simpleexplorer-win_x64.exe`.
-- `src/index.html` opens directly in a browser too — `src/fs.js` falls back
-  to mock data when `window.Neutralino` is missing.
+- `npm start` — one-command path. Runs `scripts/run.ps1`, which is
+  idempotent: `npm install` if needed, `neu update` if needed, build
+  `extras/shellhelp.exe` if MSVC `cl` is on PATH and the binary is
+  missing/stale, then `neu run`.
+- Granular: `npm install` (once), `npm run setup` (one-time runtime
+  download), `npm run dev` (hot-reload), `npm run build` (release exe).
+- `src/index.html` opens directly in a browser too — `src/fs.js` falls
+  back to mock data when `window.Neutralino` is missing.
 
 ## Layout
 

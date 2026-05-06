@@ -17,12 +17,25 @@ Prerequisites:
 - On Windows: [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
   (already installed on Win11)
 
-```bash
+```powershell
+npm start          # one-command: install + setup + (build helper) + run
+```
+
+That delegates to `scripts/run.ps1`, which is idempotent — skips steps
+already done. Or run them yourself:
+
+```powershell
 npm install        # installs the Neutralinojs CLI
 npm run setup      # one-time: downloads the Neutralino runtime to bin/
 npm run dev        # neu run — opens the app with hot reload of src/
 npm run build      # neu build — produces dist/simpleexplorer/...exe
 ```
+
+The script also (re)builds `extras/shellhelp.exe` from `tools/shellhelp.cpp`
+when MSVC `cl` is on `PATH` — open an "x64 Native Tools Command Prompt
+for VS" first if you have Visual C++ Build Tools installed. Without `cl`
+the script warns and continues; right-click actions transparently fall
+back to a slower PowerShell path.
 
 `src/index.html` also opens directly in a browser for UI-only iteration —
 the FS adapter falls back to mock folder data when `window.Neutralino`
