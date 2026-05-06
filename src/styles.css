@@ -539,3 +539,10 @@ kbd {
   font-size: 10.5px; color: var(--text-dim);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+.ctx-menu__item--disabled { opacity: 0.45; cursor: default; }
+.ctx-menu__item--disabled:hover { background: transparent; }
+.ctx-menu__item--loading {
+  color: var(--text-dim); font-style: italic; cursor: default;
+}
+.ctx-menu__item--loading:hover { background: transparent; }
+.ctx-menu__arrow { color: var(--text-dim); font-size: 14px; line-height: 1; }

@@ -17,8 +17,11 @@ From a Developer Command Prompt:
 
 ```
 cd tools
-cl /nologo /EHsc /O2 /utf-8 shellhelp.cpp /link shell32.lib ole32.lib
+cl /nologo /EHsc /O2 /utf-8 shellhelp.cpp /link shell32.lib ole32.lib user32.lib
 ```
+
+(`user32.lib` is needed for the menu-walking calls — `GetMenuItemCount`,
+`GetMenuItemInfoW`, `CreatePopupMenu` — used by the `menu` / `invoke` verbs.)
 
 The output is `tools/shellhelp.exe`. Move it next to the runtime so the app
 picks it up:

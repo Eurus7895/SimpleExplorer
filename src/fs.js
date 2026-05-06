@@ -132,6 +132,24 @@ async function runHelper(...args) {
   return await exec(`"${HELPER_PATH}" ${argstr}`);
 }
 
+// Walks the Windows shell context menu via the helper exe's `menu` verb.
+// Returns null when the helper isn't built yet (mock mode or pre-compile),
+// so the caller can fall back to a curated static menu.
+export async function helperMenu(paths) {
+  if (!N || !(await helperAvailable())) return null;
+  const r = await runHelper('menu', ...paths);
+  if (r.exitCode !== 0) return null;
+  try { return JSON.parse(r.stdOut.trim() || '[]'); }
+  catch { return null; }
+}
+
+export async function helperInvoke(id, paths) {
+  if (!N || !(await helperAvailable())) return false;
+  const argstr = [id, ...paths].map((a) => `"${a}"`).join(' ');
+  await N.os.execCommand(`"${HELPER_PATH}" invoke ${argstr}`, { background: true });
+  return true;
+}
+
 async function exec(cmd) {
   if (!N) { console.warn('[mock] exec', cmd); return { stdOut: '', stdErr: '', exitCode: 0 }; }
   try {

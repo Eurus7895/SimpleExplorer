@@ -5,10 +5,27 @@ state lives in [`design.md`](./design.md); repository conventions live
 in [`../CLAUDE.md`](../CLAUDE.md). This file is the source of truth for
 **what's painted but not wired**, and **what hasn't been started**.
 
-Status as of the last commit on `claude/implement-simple-explorer-SxdNe`:
-**MVP**, not v1. The three direction skins render and the core file
-operations (list, copy, move, rename, delete, open) work, but several
-buttons in the chrome are decorative.
+Status as of the last commit on `claude/review-roadmap-MKEpx`:
+post-MVP, pre-v1. Phase 1 (chrome wiring) and Phase 1.5 (full Windows
+shell context menu) have shipped; the remaining gap is multi-tabs,
+workspace switching, the Ctrl+K palette, and sort/view menus.
+
+## Shipped
+
+- **Phase 1 — chrome wiring** (commit `0b7242e`). Fluent window
+  controls, clickable breadcrumbs in all three directions, Direction B
+  rail navigation, Direction C Pinned, dynamic drives section in both
+  Fluent and Workspace sidebars (real free-space numbers from
+  `fs.listDrives()`).
+- **Phase 1.5 — full Windows shell context menu**. Two new helper
+  verbs in `tools/shellhelp.cpp` (`menu` walks `IContextMenu` →
+  emits a JSON tree; `invoke` calls `InvokeCommand` for the chosen
+  verb id). `src/pane.js` now renders the curated SimpleExplorer
+  items at the top, then asynchronously fills shell-extension entries
+  underneath, with hover-spawn submenus, a 3-second TTL cache, and
+  graceful fallback to the legacy curated-only list when the helper
+  isn't compiled. Helper still needs an MSVC build pass on a Windows
+  box (`tools/build.md`) to ship the binary.
 
 ## Known bugs
 
@@ -86,13 +103,19 @@ These render and look right, but clicking them does nothing today:
 
 ## Roadmap, sized and prioritized
 
-### Phase 1.5 — Full Windows shell context menu (~3 days)
+### ~~Phase 1.5 — Full Windows shell context menu~~ (shipped)
 
 > **Promoted from Phase 7.** The user explicitly wants the right-click
 > menu to match stock Explorer (Bosch File Services, FastSearch,
 > SWB-Shell, Open with Code, Open Git Bash, 7-Zip, TortoiseSVN, Send to,
 > Properties, …) — i.e. every installed shell extension, not the
 > curated short list we ship today.
+
+Implementation lives in `tools/shellhelp.cpp` (verbs `menu` + `invoke`)
+and `src/pane.js` (curated section + async shell fill + submenus +
+cache). Notes preserved below for context; further follow-ups (icons,
+keyboard navigation, watchdog timeout for hangy extensions) are tracked
+in [Open questions / debt](#open-questions--debt).
 
 #### Approach
 
@@ -268,19 +291,22 @@ the COM object (no shared state between calls).
   Use `IContextMenu` (universally supported); upgrade only if
   specific extensions misbehave.
 
-### Phase 1 — Stop the "buttons don't work" feel (1–2 hours, one commit)
+### ~~Phase 1 — Stop the "buttons don't work" feel~~ (shipped)
 
-Hits the most visible MVP gaps. No new architecture; just wire what's
-already painted.
+Shipped as commit `0b7242e`. Items wired:
 
 - Clickable breadcrumb segments in all three directions.
-- Direction B rail items navigate.
+- Direction B rail items navigate (Home / Downloads / Docs).
 - Direction C sidebar Pinned items navigate.
-- Direction C drives populated from `fs.listDrives()` instead of hardcoded.
-- Window controls (─ ☐ ✕) call `Neutralino.window.minimize() / maximize() /
-  unmaximize() / app.exit()`.
-- Compile `extras/shellhelp.exe` (you do this on a Windows box with MSVC
-  once; `scripts/run.ps1` already auto-builds when `cl` is on PATH).
+- Direction C drives populated from `fs.listDrives()`.
+- Direction A drives section (new) also driven by `fs.listDrives()`.
+- Fluent window controls (─ ☐ ✕) call
+  `Neutralino.window.minimize() / maximize() / unmaximize() / app.exit()`.
+
+Still pending: compile `extras/shellhelp.exe` on a Windows box with
+MSVC. Until then, drive list / properties / delete fall back to
+PowerShell (~250–400 ms) and the new shell context menu silently
+degrades to the curated-only list.
 
 ### Phase 2 — Real multi-tabs per pane (~half day)
 
