@@ -1,0 +1,178 @@
+// Direction B — Command-bar first
+// Minimal chrome, ⌘K is path/search/commands. Rail sidebar, scope-chip pane
+// header. Visuals trace explorer-cmd.jsx in the design bundle.
+
+import { iconHTML } from '../icons.js';
+import { renderRows } from '../pane.js';
+import { RAIL_ITEMS } from '../sidebar-data.js';
+import * as fs from '../fs.js';
+
+const LAYOUT_OPTS = [
+  { id: '1',  icn: 'one' },
+  { id: '2v', icn: 'split-h' },
+  { id: '2h', icn: 'split-v' },
+  { id: '3',  icn: 'workspace' },
+  { id: '4',  icn: 'grid4' },
+];
+
+export function renderCmd(root, ctx) {
+  root.innerHTML = '';
+  const app = el('div', 'b-app');
+
+  app.appendChild(topBar(ctx));
+
+  const body = el('div', 'b-body');
+  body.appendChild(rail(ctx));
+
+  const grid = el('div', 'b-grid');
+  grid.style.gridTemplateColumns = ctx.layoutDef.cols;
+  grid.style.gridTemplateRows = ctx.layoutDef.rows;
+
+  ctx.panes.slice(0, ctx.layoutDef.panes).forEach((pane, i) => {
+    const card = pane3rdAware(ctx, i, paneCard(ctx, pane, i));
+    grid.appendChild(card);
+  });
+
+  body.appendChild(grid);
+  app.appendChild(body);
+  root.appendChild(app);
+}
+
+function topBar(ctx) {
+  const bar = el('div', 'b-topbar');
+  bar.innerHTML = `
+    <div class="b-brand">
+      <div class="b-brand__logo"></div>
+      SimpleExplorer
+    </div>
+    <span class="b-sep"></span>
+    <button class="iconbtn" data-nav="back">${iconHTML('back')}</button>
+    <button class="iconbtn" data-nav="fwd">${iconHTML('fwd')}</button>
+    <div class="b-cmdpalette">
+      ${iconHTML('search', 14)}
+      <input data-search placeholder="Go to folder, search, or run a command" value="${ctx.panes[ctx.activePane].filter || ''}" />
+      <kbd>Ctrl K</kbd>
+    </div>
+    <div class="spacer"></div>
+    ${directionSwitcher(ctx)}
+    ${layoutPicker(ctx)}
+    <button class="iconbtn" data-act="theme" title="Toggle theme">${iconHTML(ctx.theme === 'dark' ? 'sun' : 'moon')}</button>
+  `;
+  bindClicks(bar, ctx);
+  bindNav(bar, ctx);
+  bindLayout(bar, ctx);
+  bindSearch(bar, ctx);
+  return bar;
+}
+
+function rail(ctx) {
+  const r = el('div', 'b-rail');
+  RAIL_ITEMS.forEach((it, i) => {
+    const btn = el('button', 'b-rail__btn' + (i === 1 ? ' on' : ''));
+    btn.title = it.label;
+    btn.innerHTML = iconHTML(it.icon, 16);
+    r.appendChild(btn);
+  });
+  const spacer = el('div', 'spacer');
+  r.appendChild(spacer);
+  const more = el('button', 'b-rail__btn');
+  more.innerHTML = iconHTML('more');
+  r.appendChild(more);
+  return r;
+}
+
+function paneCard(ctx, pane, i) {
+  const card = el('div', 'b-pane' + (i === ctx.activePane ? ' b-pane--active' : ''));
+  card.addEventListener('click', () => ctx.setActivePane(i));
+
+  const head = el('div', 'b-pane__head');
+  const segs = fs.pathSegments(pane.path);
+  const last = segs[segs.length - 1] || 'home';
+  const prefix = segs.slice(0, -1).join('/');
+  head.innerHTML = `
+    <div class="b-chip">
+      ${iconHTML('folder-open', 13)}
+      ${prefix ? `<span class="b-chip__pre">${prefix}/</span>` : ''}
+      <span class="b-chip__last">${last}</span>
+      ${iconHTML('fwd', 10)}
+    </div>
+    <div class="spacer"></div>
+    <button class="iconbtn iconbtn--sm" title="View">${iconHTML('list', 14)}</button>
+    <button class="iconbtn iconbtn--sm" title="Sort">${iconHTML('sort', 14)}</button>
+    <button class="iconbtn iconbtn--sm" title="More">${iconHTML('more', 14)}</button>
+  `;
+  card.appendChild(head);
+
+  const rows = renderRows(pane, {
+    density: 'cmd',
+    onActivate: (entry) => ctx.onActivateEntry(i, entry),
+  });
+  card.appendChild(rows);
+
+  const foot = el('div', 'b-pane__foot');
+  const sel = [...pane.selected];
+  foot.innerHTML = `
+    <span>${pane.entries.length} items</span>
+    ${sel.length ? `<span>· ${sel[0]}${sel.length > 1 ? ` +${sel.length - 1}` : ''} selected</span>` : ''}
+  `;
+  card.appendChild(foot);
+  return card;
+}
+
+function pane3rdAware(ctx, i, card) {
+  if (ctx.layoutDef.thirdSpansFull && i === 2) {
+    card.style.gridColumn = '1 / -1';
+  }
+  return card;
+}
+
+function layoutPicker(ctx) {
+  return `<div class="b-layout">${LAYOUT_OPTS.map((o) => `
+    <button data-layout="${o.id}" class="${ctx.layout === o.id ? 'on' : ''}">${iconHTML(o.icn, 13)}</button>
+  `).join('')}</div>`;
+}
+
+function directionSwitcher(ctx) {
+  const opts = [
+    { id: 'fluent',    label: 'Fluent' },
+    { id: 'cmd',       label: 'Cmd' },
+    { id: 'workspace', label: 'Workspaces' },
+  ];
+  return `<div class="dir-switch">${opts.map((o) => `
+    <button data-dir="${o.id}" class="${ctx.direction === o.id ? 'on' : ''}">${o.label}</button>
+  `).join('')}</div>`;
+}
+
+function bindClicks(scope, ctx) {
+  scope.querySelectorAll('[data-act]').forEach((el) =>
+    el.addEventListener('click', () => ctx.onAction(el.dataset.act)));
+  scope.querySelectorAll('[data-action]').forEach((el) =>
+    el.addEventListener('click', () => ctx.onAction(el.dataset.action)));
+  scope.querySelectorAll('[data-dir]').forEach((el) =>
+    el.addEventListener('click', () => ctx.setDirection(el.dataset.dir)));
+}
+
+function bindNav(scope, ctx) {
+  scope.querySelectorAll('[data-nav]').forEach((el) => el.addEventListener('click', () => {
+    if (el.dataset.nav === 'back') ctx.onPaneBack(ctx.activePane);
+    else if (el.dataset.nav === 'fwd') ctx.onPaneForward(ctx.activePane);
+    else if (el.dataset.nav === 'up') ctx.onPaneUp(ctx.activePane);
+  }));
+}
+
+function bindLayout(scope, ctx) {
+  scope.querySelectorAll('[data-layout]').forEach((el) =>
+    el.addEventListener('click', () => ctx.setLayout(el.dataset.layout)));
+}
+
+function bindSearch(scope, ctx) {
+  const input = scope.querySelector('[data-search]');
+  if (!input) return;
+  input.addEventListener('input', () => ctx.onFilter(ctx.activePane, input.value));
+}
+
+function el(tag, cls) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  return e;
+}

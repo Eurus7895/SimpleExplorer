@@ -216,3 +216,30 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ── Node ──
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# ── Neutralinojs ──
+bin/
+dist/
+src/neutralino.js
+.tmp/
+
+# ── Native helpers ──
+# extras/shellhelp.exe is intentionally tracked (see tools/build.md and
+# docs/design.md). It's a tiny prebuilt binary so end users don't need MSVC.
+
+# ── Editor / OS ──
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp

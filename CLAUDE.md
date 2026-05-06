@@ -7,8 +7,15 @@ reference.
 
 ## One Sentence
 
-SimpleExplorer is a Python project; this file fixes the rules an assistant must
-follow when reading, editing, branching, and committing here.
+SimpleExplorer is a Neutralinojs Windows desktop app (vanilla HTML/CSS/JS
+frontend, ~2 MB native shell, one MSVC-built helper exe for Shell COM
+calls); this file fixes the rules an assistant must follow when reading,
+editing, branching, and committing here. Per-project architecture and
+status live in [`docs/design.md`](./docs/design.md); the
+implementation plan, MVP audit, and phased backlog live in
+[`docs/roadmap.md`](./docs/roadmap.md) — read it before starting any
+new feature so the work fits the existing plan instead of inventing a
+new one.
 
 ## Hard Invariants
 
@@ -16,10 +23,10 @@ Non-negotiable. Changing any of these requires explicit discussion in the PR.
 
 1. **No fabricated architecture.** If a module, command, or test does not exist
    on disk, do not document it as if it does. Edit reality, not aspirations.
-2. **UTF-8 everywhere.** Always pass `encoding="utf-8"` explicitly to
-   `Path.read_text()`, `Path.write_text()`, `open()`, `json.load()`, and
-   `json.dump()`. Platform defaults (`cp1252`/`charmap` on Windows) crash on
-   non-ASCII content.
+2. **UTF-8 everywhere.** All text I/O passes UTF-8 explicitly. JS reads /
+   writes use `TextDecoder`/`TextEncoder` with `'utf-8'`; the C++ helper
+   uses `wmain` + `/utf-8` so wide-char paths round-trip cleanly. Platform
+   defaults (`cp1252`/`charmap` on Windows) mangle non-ASCII content.
 3. **Prefer editing existing files.** Don't scatter new top-level docs, status
    files, or version footers — they rot. Status belongs in a single design doc,
    not sprinkled across the tree.
@@ -79,15 +86,23 @@ over the canonical-branch rule above.
 Adopt these locations as soon as the corresponding artifact exists. Do not
 create empty directories just to match the layout.
 
-- **Source code:** `src/<package>/` (Python package layout)
-- **Tests:** `tests/` mirroring `src/` structure
+- **Frontend (JS/CSS/HTML):** `src/` — flat ES-module layout, no bundler.
+- **Per-direction renderers:** `src/directions/<name>.js`.
+- **Native helpers (C++ source):** `tools/<helper>.cpp` plus a sibling
+  `build.md` documenting the MSVC build command.
+- **Native helpers (compiled binaries):** `extras/<helper>.exe`,
+  intentionally tracked so end users never need a C++ toolchain.
 - **Slash commands:** `.github/commands/<name>.md` (frontmatter-driven)
 - **Skills:** `.github/skills/<name>/SKILL.md` (+ `assets/`, `references/`)
 - **Agents:** `.github/agents/<role>.agent.md` (canonical, flat catalog)
 - **Memory:** `.github/memory/{MEMORY.md, architecture.md, failure-patterns.md}`
-- **Hook scripts:** `scripts/<event>.py`, wired in `hooks.json`
 - **Design / status:** `docs/design.md` is the single source of truth for
   current status; do not duplicate status into READMEs or footers.
+- **Implementation plan / backlog:** `docs/roadmap.md` is the canonical
+  list of what's painted-but-not-wired, what's deferred, and the phased
+  plan for upcoming work. New features go through this file first
+  (sized, ordered, written down) before any code lands. Update it when
+  a phase ships.
 
 ### Adding Things
 
@@ -108,39 +123,38 @@ create empty directories just to match the layout.
   removed.
 - Three similar lines is better than a premature abstraction.
 
-### Text I/O — Always Pass `encoding="utf-8"` Explicitly
+### Text I/O — Always Use UTF-8 Explicitly
 
-```python
-from pathlib import Path
-import json
+JS (Neutralino has no encoding param — but `readFile` returns a string
+decoded from UTF-8 by default; `writeFile` accepts a string and encodes
+UTF-8). Don't reach for `TextDecoder('windows-1252')` etc. without a
+specific reason.
 
-text = Path("notes.md").read_text(encoding="utf-8")
-Path("out.md").write_text(text, encoding="utf-8")
-
-with open("data.json", "r", encoding="utf-8") as f:
-    payload = json.load(f)
-with open("data.json", "w", encoding="utf-8") as f:
-    json.dump(payload, f, ensure_ascii=False, indent=2)
+```js
+import * as fs from './fs.js';
+const text = await Neutralino.filesystem.readFile('notes.md');         // UTF-8 in
+await Neutralino.filesystem.writeFile('out.md', text);                  // UTF-8 out
+const payload = JSON.parse(await Neutralino.filesystem.readFile('data.json'));
+await Neutralino.filesystem.writeFile('data.json', JSON.stringify(payload, null, 2));
 ```
+
+C++ helpers use `wmain` + `/utf-8` and pass `wchar_t*` paths through
+`SHCreateItemFromParsingName` / `ShellExecuteExW` so non-ASCII paths
+round-trip cleanly. See `tools/shellhelp.cpp`.
 
 ## Commands
 
-These are the standard checks once the corresponding tooling is wired up. Run
-them before declaring a task complete.
+These are the standard checks once the corresponding tooling is wired up.
+Run them before declaring a task complete.
 
 ```bash
-# Lint
-ruff check .
-
-# Type-check
-mypy .
-
-# Tests
-pytest -v
+# JS lint    (not yet wired — when added, likely eslint or biome)
+# JS test    (not yet wired — vitest or node:test, run from src/)
+# Helper rebuild (only when tools/*.cpp changes; see tools/build.md)
 ```
 
-If a tool is not yet configured, say so explicitly rather than claiming the
-check passed.
+If a tool is not yet configured, say so explicitly rather than claiming
+the check passed.
 
 ## Decision Rules
 

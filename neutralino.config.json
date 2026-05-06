@@ -1,0 +1,48 @@
+{
+  "applicationId": "com.simpleexplorer.app",
+  "version": "0.1.0",
+  "defaultMode": "window",
+  "documentRoot": "/src/",
+  "url": "/index.html",
+  "enableServer": true,
+  "enableNativeAPI": true,
+  "tokenSecurity": "one-time",
+  "logging": {
+    "enabled": true,
+    "writeToLogFile": false
+  },
+  "nativeAllowList": [
+    "app.*",
+    "os.*",
+    "filesystem.*",
+    "window.*",
+    "events.*",
+    "extensions.*",
+    "clipboard.*"
+  ],
+  "modes": {
+    "window": {
+      "title": "SimpleExplorer",
+      "width": 1280,
+      "height": 800,
+      "minWidth": 720,
+      "minHeight": 480,
+      "fullScreen": false,
+      "alwaysOnTop": false,
+      "enableInspector": false,
+      "borderless": false,
+      "maximize": false,
+      "hidden": false,
+      "resizable": true,
+      "exitProcessOnClose": true
+    }
+  },
+  "cli": {
+    "binaryName": "simpleexplorer",
+    "resourcesPath": "/src/",
+    "extensionsPath": "/extensions/",
+    "clientLibrary": "/src/neutralino.js",
+    "binaryVersion": "5.6.0",
+    "clientVersion": "5.6.0"
+  }
+}

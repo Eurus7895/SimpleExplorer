@@ -1,0 +1,16 @@
+{
+  "name": "simple-explorer",
+  "version": "0.1.0",
+  "description": "A fast, simple file explorer for Windows.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "powershell -ExecutionPolicy Bypass -File scripts/run.ps1",
+    "setup": "neu update",
+    "dev": "neu run",
+    "build": "neu build"
+  },
+  "devDependencies": {
+    "@neutralinojs/neu": "^11.0.0"
+  }
+}
