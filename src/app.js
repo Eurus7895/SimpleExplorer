@@ -45,19 +45,40 @@ const LAYOUTS = {
 const settings = loadSettings();
 let panes = [];
 let activePane = 0;
+let homePath = '~';
+let drives = [];
 
 async function init() {
-  const home = (await fs.homeDir()) || '~';
+  homePath = (await fs.homeDir()) || '~';
   const seedPaths = [
-    home,
-    home,
-    home + (home.includes('\\') ? '\\Downloads' : '/Downloads'),
-    home + (home.includes('\\') ? '\\Documents' : '/Documents'),
+    homePath,
+    homePath,
+    quickAccessPath('Downloads'),
+    quickAccessPath('Documents'),
   ];
   panes = seedPaths.map((p, i) => createPaneState(i, p));
   await Promise.all(panes.map((p) => safeLoad(p)));
   render();
   bindGlobalKeys();
+  // Drives populate after first paint so list/render isn't blocked on a
+  // helper / PowerShell shell-out at startup.
+  fs.listDrives().then((d) => { drives = d; render(); }).catch(() => {});
+}
+
+function quickAccessPath(name) {
+  const sep = homePath.includes('\\') ? '\\' : '/';
+  return homePath + sep + name;
+}
+
+function railTarget(key) {
+  switch (key) {
+    case 'home':      return homePath;
+    case 'downloads': return quickAccessPath('Downloads');
+    case 'documents': return quickAccessPath('Documents');
+    case 'pictures':  return quickAccessPath('Pictures');
+    case 'desktop':   return quickAccessPath('Desktop');
+    default: return null; // pinned/recent/drives → popovers (out of scope)
+  }
 }
 
 async function safeLoad(state) {
@@ -79,6 +100,20 @@ function render() {
     layoutDef: LAYOUTS[settings[dir.layoutKey]] || LAYOUTS['2v'],
     panes,
     activePane,
+    home: homePath,
+    drives,
+    quickAccessPath,
+    railTarget,
+    async onWinCtl(kind) {
+      const N = window.Neutralino; if (!N) return;
+      try {
+        if (kind === 'min') await N.window.minimize();
+        else if (kind === 'max') {
+          const m = await N.window.isMaximized();
+          if (m) await N.window.unmaximize(); else await N.window.maximize();
+        } else if (kind === 'close') await N.app.exit();
+      } catch (e) { console.warn('window control failed:', kind, e); }
+    },
     setActivePane(i) {
       // No-op when already active — re-rendering on every row click was
       // tearing down the row mid-double-click, so the dblclick event lost

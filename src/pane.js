@@ -176,22 +176,39 @@ export function renderColumnHeader(direction) {
   return head;
 }
 
-export function renderBreadcrumb(path) {
+export function renderBreadcrumb(path, onSegmentClick) {
   const wrap = document.createElement('div');
   wrap.className = 'crumbs';
   wrap.innerHTML = iconHTML('home', 13);
   const segs = fs.pathSegments(path);
+  const win = path.includes('\\');
   segs.forEach((seg, i) => {
     const sep = document.createElement('span');
     sep.className = 'crumbs__sep';
     sep.textContent = '›';
     wrap.appendChild(sep);
+    const isLast = i === segs.length - 1;
     const part = document.createElement('span');
-    part.className = 'crumbs__seg' + (i === segs.length - 1 ? ' crumbs__seg--last' : '');
+    part.className = 'crumbs__seg' + (isLast ? ' crumbs__seg--last' : '');
     part.textContent = seg;
+    if (!isLast && onSegmentClick) {
+      const target = buildSegPath(segs, i, win);
+      part.style.cursor = 'pointer';
+      part.addEventListener('click', (e) => { e.stopPropagation(); onSegmentClick(target); });
+    }
     wrap.appendChild(part);
   });
   return wrap;
+}
+
+function buildSegPath(segs, idx, win) {
+  const parts = segs.slice(0, idx + 1);
+  if (win) {
+    // First segment is the drive ("C:") — always keep its trailing slash.
+    if (parts.length === 1) return parts[0] + '\\';
+    return parts.join('\\');
+  }
+  return '/' + parts.join('/');
 }
 
 function escapeHtml(s) {

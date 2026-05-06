@@ -4,8 +4,7 @@
 // Visuals trace explorer-workspace.jsx in the design bundle.
 
 import { iconHTML } from '../icons.js';
-import { renderRows, getRecent } from '../pane.js';
-import * as fs from '../fs.js';
+import { renderRows, renderBreadcrumb, getRecent } from '../pane.js';
 
 const ACCENTS = ['#22c55e', '#f59e0b', '#3b82f6', '#ef4444'];
 
@@ -79,9 +78,9 @@ function topBar(ctx) {
 function sidebar(ctx) {
   const side = el('div', 'c-sidebar');
   side.appendChild(section('Pinned', [
-    { icon: 'pin', label: 'Projects' },
-    { icon: 'pin', label: 'qt5.14.2' },
-    { icon: 'pin', label: 'Downloads' },
+    { icon: 'pin', label: 'Home',      onClick: () => ctx.onPaneNav(ctx.activePane, ctx.home) },
+    { icon: 'pin', label: 'Downloads', onClick: () => ctx.onPaneNav(ctx.activePane, ctx.quickAccessPath('Downloads')) },
+    { icon: 'pin', label: 'Documents', onClick: () => ctx.onPaneNav(ctx.activePane, ctx.quickAccessPath('Documents')) },
   ]));
 
   const recent = getRecent().slice(0, 5);
@@ -94,11 +93,21 @@ function sidebar(ctx) {
     }))));
   }
 
-  side.appendChild(section('Drives', [
-    { icon: 'drive', label: 'C: System', meta: '146 GB' },
-    { icon: 'drive', label: 'D: Data',   meta: '892 GB' },
-  ]));
+  if (ctx.drives.length) {
+    side.appendChild(section('Drives', ctx.drives.map((d) => ({
+      icon: 'drive',
+      label: d.name,
+      meta: d.free_bytes ? freeLabel(d.free_bytes) : '',
+      onClick: () => ctx.onPaneNav(ctx.activePane, d.path),
+    }))));
+  }
   return side;
+}
+
+function freeLabel(bytes) {
+  if (!bytes) return '';
+  const gb = bytes / 1073741824;
+  return (gb >= 100 ? Math.round(gb) : gb.toFixed(1)) + ' GB';
 }
 
 function section(title, items) {
@@ -140,13 +149,12 @@ function paneCard(ctx, pane, i) {
   card.appendChild(head);
 
   const crumb = el('div', 'c-pane__crumb');
-  const segs = fs.pathSegments(pane.path);
-  crumb.innerHTML = `
-    ${iconHTML('home', 12)}
-    ${segs.map((s, idx) => `<span class="crumbs__sep">›</span><span class="${idx === segs.length - 1 ? 'crumbs__seg--last' : ''}">${s}</span>`).join('')}
-    <div class="spacer"></div>
-    ${iconHTML('search', 12)}
-  `;
+  crumb.appendChild(renderBreadcrumb(pane.path, (p) => ctx.onPaneNav(i, p)));
+  const spacer = el('div', 'spacer');
+  crumb.appendChild(spacer);
+  const searchIcn = document.createElement('span');
+  searchIcn.innerHTML = iconHTML('search', 12);
+  crumb.appendChild(searchIcn);
   card.appendChild(crumb);
 
   const cols = el('div', 'cols cols--ws');

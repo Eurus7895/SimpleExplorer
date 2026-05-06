@@ -67,10 +67,13 @@ function topBar(ctx) {
 
 function rail(ctx) {
   const r = el('div', 'b-rail');
-  RAIL_ITEMS.forEach((it, i) => {
-    const btn = el('button', 'b-rail__btn' + (i === 1 ? ' on' : ''));
+  RAIL_ITEMS.forEach((it) => {
+    const btn = el('button', 'b-rail__btn');
     btn.title = it.label;
     btn.innerHTML = iconHTML(it.icon, 16);
+    const target = ctx.railTarget(it.key);
+    if (target) btn.addEventListener('click', () => ctx.onPaneNav(ctx.activePane, target));
+    else btn.disabled = true; // pinned/recent/drives popovers — out of MVP scope
     r.appendChild(btn);
   });
   const spacer = el('div', 'spacer');
