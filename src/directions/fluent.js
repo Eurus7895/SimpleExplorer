@@ -53,12 +53,13 @@ function titleBar(ctx) {
       ${iconHTML(ctx.theme === 'dark' ? 'sun' : 'moon')}
     </button>
     <div class="a-wincontrols">
-      <span class="a-winctl">─</span>
-      <span class="a-winctl">☐</span>
-      <span class="a-winctl a-winctl--close">✕</span>
+      <span class="a-winctl" data-winctl="min" title="Minimize">─</span>
+      <span class="a-winctl a-winctl--disabled" title="Use the OS title bar to maximize (frameless mode lands in Phase 7)">☐</span>
+      <span class="a-winctl a-winctl--close" data-winctl="close" title="Close">✕</span>
     </div>
   `;
   bindClicks(bar, ctx);
+  bindWinCtl(bar, ctx);
   return bar;
 }
 
@@ -100,13 +101,25 @@ function sidebar(ctx) {
     sec.items.forEach((it) => {
       const row = el('div', 'a-sidebar__item');
       row.innerHTML = `${iconHTML(it.icon, 15)}<span>${it.name}</span>${it.meta ? `<small>${it.meta}</small>` : ''}`;
-      row.addEventListener('click', () => {
-        if (it.path) ctx.onPaneNav(ctx.activePane, it.path);
-      });
+      const target = it.path || (it.key ? ctx.railTarget(it.key) : null);
+      if (target) row.addEventListener('click', () => ctx.onPaneNav(ctx.activePane, target));
       block.appendChild(row);
     });
     side.appendChild(block);
   });
+
+  if (ctx.drives.length) {
+    const block = el('div', 'a-sidebar__block');
+    block.innerHTML = `<div class="a-sidebar__title">Drives</div>`;
+    ctx.drives.forEach((d) => {
+      const row = el('div', 'a-sidebar__item');
+      const meta = d.free_bytes ? `${freeLabelGB(d.free_bytes)} free` : '';
+      row.innerHTML = `${iconHTML('drive', 15)}<span>${d.name}</span>${meta ? `<small>${meta}</small>` : ''}`;
+      row.addEventListener('click', () => ctx.onPaneNav(ctx.activePane, d.path));
+      block.appendChild(row);
+    });
+    side.appendChild(block);
+  }
 
   const recent = getRecent();
   if (recent.length) {
@@ -137,7 +150,7 @@ function paneCard(ctx, pane, i) {
   card.appendChild(tabbar);
 
   const crumbBar = el('div', 'a-crumbbar');
-  crumbBar.appendChild(renderBreadcrumb(pane.path));
+  crumbBar.appendChild(renderBreadcrumb(pane.path, (p) => ctx.onPaneNav(i, p)));
   card.appendChild(crumbBar);
 
   const head = renderColumnHeader('a');
@@ -176,9 +189,8 @@ function layoutPicker(ctx) {
 
 function directionSwitcher(ctx) {
   const opts = [
-    { id: 'fluent',    label: 'Fluent' },
-    { id: 'cmd',       label: 'Cmd' },
-    { id: 'workspace', label: 'Workspaces' },
+    { id: 'fluent', label: 'Fluent' },
+    { id: 'cmd',    label: 'Cmd' },
   ];
   return `<div class="dir-switch">${opts.map((o) => `
     <button data-dir="${o.id}" class="${ctx.direction === o.id ? 'on' : ''}">${o.label}</button>
@@ -192,6 +204,11 @@ function bindClicks(scope, ctx) {
     el.addEventListener('click', () => ctx.onAction(el.dataset.action)));
   scope.querySelectorAll('[data-dir]').forEach((el) =>
     el.addEventListener('click', () => ctx.setDirection(el.dataset.dir)));
+}
+
+function bindWinCtl(scope, ctx) {
+  scope.querySelectorAll('[data-winctl]').forEach((el) =>
+    el.addEventListener('click', (e) => { e.stopPropagation(); ctx.onWinCtl(el.dataset.winctl); }));
 }
 
 function bindNav(scope, ctx) {
@@ -211,6 +228,11 @@ function bindSearch(scope, ctx) {
   const input = scope.querySelector('[data-search]');
   if (!input) return;
   input.addEventListener('input', () => ctx.onFilter(ctx.activePane, input.value));
+}
+
+function freeLabelGB(bytes) {
+  const gb = bytes / 1073741824;
+  return gb >= 100 ? Math.round(gb) + ' GB' : gb.toFixed(1) + ' GB';
 }
 
 function shortPath(p) {

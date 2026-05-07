@@ -53,8 +53,7 @@ src/                      frontend, no build step
   ├── styles.css          all CSS; per-direction themed via [data-direction] / [data-theme]
   └── directions/
         ├── fluent.js     A · Fluent Refined (Win11 Mica chrome)
-        ├── cmd.js        B · Command-bar first (Linear/Arc inspired)
-        └── workspace.js  C · Workspaces (saved pane sets, tinted accents)
+        └── cmd.js        B · Command-bar first (Linear/Arc inspired)
 docs/
   └── design.md           this file (single source of truth per CLAUDE.md)
 ```
@@ -64,17 +63,32 @@ docs/
 
 ## Native helpers
 
-Three right-click actions — Properties, Delete-to-Recycle-Bin, drive list —
-used to shell out to PowerShell. Each call paid ~200 ms of PowerShell
-cold-start, dominating perceived latency. To stay near native speed without
-re-introducing Rust/MSVC at install time, we ship a small MSVC-built
-binary at `extras/shellhelp.exe`:
+Several right-click actions — Properties, Delete-to-Recycle-Bin, drive
+list, and the full Windows shell context menu — used to either shell out
+to PowerShell or be missing entirely. Each PowerShell call paid ~200 ms
+of cold-start, dominating perceived latency, and the curated JS-only
+menu was missing the OS shell-extension entries (Open with VS Code, Git
+Bash, 7-Zip, TortoiseSVN, Send to, …) that users expect from stock
+Explorer. To stay near native speed without re-introducing Rust/MSVC at
+install time, we ship a small MSVC-built binary at `extras/shellhelp.exe`:
 
 | Verb | Implementation | Replaces |
 | --- | --- | --- |
 | `properties <path>` | `ShellExecuteEx("properties")` | PowerShell + `Shell.Application` COM |
 | `trash <path…>` | `IFileOperation::DeleteItem` (batched, recycle-bin flag) | PowerShell + `Microsoft.VisualBasic.FileIO` |
 | `drives` | `GetLogicalDriveStringsW` + `GetDiskFreeSpaceExW` → JSON | PowerShell + `Get-PSDrive` |
+| `menu <path…>` | `IShellFolder::GetUIObjectOf` → `IContextMenu::QueryContextMenu` → JSON tree | curated static JS list |
+| `invoke <id> <path…>` | `IContextMenu::InvokeCommand` with the chosen verb id | (no equivalent before) |
+
+The curated SimpleExplorer items (Open in active pane, Copy path, Rename,
+Delete, Show in Explorer, Properties) still live in `src/pane.js` and
+render at the top of the menu — they're *ours*, not the OS's, and they
+don't appear in `IContextMenu`. Below them, the helper's JSON tree fills
+in asynchronously: typically < 300 ms, < 1 s worst case. Submenus
+(`Send to`, `7-Zip`, `TortoiseSVN`) expand on hover after a 200 ms delay
+and use `IContextMenu3::HandleMenuMsg2(WM_INITMENUPOPUP)` to populate
+lazy entries. A 3-second TTL cache keyed by selection paths avoids
+re-walking COM on repeat right-clicks.
 
 Source: [`tools/shellhelp.cpp`](../tools/shellhelp.cpp). Build instructions:
 [`tools/build.md`](../tools/build.md). The compiled exe is checked into
@@ -86,7 +100,8 @@ PowerShell paths when not — this keeps the app working immediately after
 
 Latency budget after the change:
 
-- Right-click → menu visible: < 30 ms
+- Right-click → curated items visible: < 30 ms
+- Right-click → shell-extension items filled: < 300 ms typical, < 1 s worst case
 - Right-click → Properties dialog visible: < 100 ms (was 250–400 ms)
 - Delete (single file): < 100 ms (was 250–400 ms)
 - Drive list paint: < 150 ms (was 250–400 ms)
@@ -103,7 +118,6 @@ than inventing new values:
 - `explorer-shared.jsx` — colors, icon set, sample paths
 - `explorer-fluent.jsx` — Direction A spec (palette near the top)
 - `explorer-cmd.jsx` — Direction B spec
-- `explorer-workspace.jsx` — Direction C spec
 
 When tweaking visuals, port from those files.
 

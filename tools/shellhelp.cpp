@@ -2,15 +2,20 @@
 //
 // Native Win32 helper for SimpleExplorer's right-click actions. Replaces
 // PowerShell shell-outs in src/fs.js, eliminating the ~200 ms PowerShell
-// cold-start tax that dominates Properties / Delete / drive-list latency.
+// cold-start tax that dominates Properties / Delete / drive-list latency,
+// and exposes the full Windows shell context menu (every installed shell
+// extension — Open with VS Code, Git Bash, 7-Zip, TortoiseSVN, Send to,
+// …) via IContextMenu so it matches stock Explorer 1:1.
 //
 // Build (one-time, MSVC):
-//   cl /nologo /EHsc /O2 /utf-8 shellhelp.cpp /link shell32.lib ole32.lib
+//   cl /nologo /EHsc /O2 /utf-8 shellhelp.cpp /link shell32.lib ole32.lib user32.lib
 //
 // Verbs:
 //   shellhelp properties <path>             — show real Windows Properties
 //   shellhelp trash <path> [<path> ...]     — send to Recycle Bin (batched)
 //   shellhelp drives                        — emit drive-list JSON to stdout
+//   shellhelp menu <path> [<path> ...]      — emit context-menu JSON tree
+//   shellhelp invoke <id> <path> [<path>...] — invoke menu command id
 
 #include <windows.h>
 #include <shlobj.h>
@@ -18,6 +23,11 @@
 #include <objbase.h>
 #include <stdio.h>
 #include <wchar.h>
+#include <string.h>
+
+// ID range for QueryContextMenu. 1-based — id 0 means "no command".
+#define CTX_ID_MIN  1
+#define CTX_ID_MAX  0x7FFF
 
 static int verb_properties(int argc, wchar_t** argv) {
     if (argc < 3) {
@@ -98,14 +108,255 @@ static int verb_drives(void) {
     return 0;
 }
 
+// ── Context-menu helpers ────────────────────────────────────────────────────
+
+// Print a UTF-8, JSON-escaped string. Input is UTF-16; we transcode to UTF-8
+// via WideCharToMultiByte and escape the JSON-special chars on the way out.
+static void json_print_str(const wchar_t* w) {
+    if (!w) { fputs("\"\"", stdout); return; }
+    int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, NULL, 0, NULL, NULL);
+    if (n <= 1) { fputs("\"\"", stdout); return; }
+    char* u = (char*)malloc((size_t)n);
+    if (!u) { fputs("\"\"", stdout); return; }
+    WideCharToMultiByte(CP_UTF8, 0, w, -1, u, n, NULL, NULL);
+
+    fputc('"', stdout);
+    for (char* p = u; *p; ++p) {
+        unsigned char c = (unsigned char)*p;
+        switch (c) {
+            case '"':  fputs("\\\"", stdout); break;
+            case '\\': fputs("\\\\", stdout); break;
+            case '\b': fputs("\\b",  stdout); break;
+            case '\f': fputs("\\f",  stdout); break;
+            case '\n': fputs("\\n",  stdout); break;
+            case '\r': fputs("\\r",  stdout); break;
+            case '\t': fputs("\\t",  stdout); break;
+            default:
+                if (c < 0x20) printf("\\u%04x", c);
+                else fputc((int)c, stdout);
+        }
+    }
+    fputc('"', stdout);
+    free(u);
+}
+
+// Build an IContextMenu over <n> sibling paths (must share one parent
+// folder, which is how Explorer's multi-select works). Hands back the
+// parent IShellFolder so callers can release it after the menu is done.
+static HRESULT build_context_menu(int n, wchar_t** paths,
+                                  IContextMenu** out_cm,
+                                  IShellFolder** out_parent) {
+    *out_cm = NULL;
+    *out_parent = NULL;
+    if (n <= 0) return E_INVALIDARG;
+
+    // First path defines the parent folder.
+    PIDLIST_ABSOLUTE pidl0 = NULL;
+    HRESULT hr = SHParseDisplayName(paths[0], NULL, &pidl0, 0, NULL);
+    if (FAILED(hr)) return hr;
+
+    IShellFolder* parent = NULL;
+    PCUITEMID_CHILD child0 = NULL;
+    hr = SHBindToParent(pidl0, IID_PPV_ARGS(&parent), &child0);
+    if (FAILED(hr)) { CoTaskMemFree(pidl0); return hr; }
+
+    // Callers (selections in one pane) always share a parent folder, so
+    // we don't validate it — just gather the child PIDLs.
+    PCUITEMID_CHILD* children = (PCUITEMID_CHILD*)malloc(sizeof(PCUITEMID_CHILD) * (size_t)n);
+    PIDLIST_ABSOLUTE* abs = (PIDLIST_ABSOLUTE*)malloc(sizeof(PIDLIST_ABSOLUTE) * (size_t)n);
+    if (!children || !abs) {
+        free(children); free(abs);
+        parent->Release(); CoTaskMemFree(pidl0);
+        return E_OUTOFMEMORY;
+    }
+    abs[0] = pidl0;
+    children[0] = child0;
+    UINT count = 1;
+    for (int i = 1; i < n; ++i) {
+        PIDLIST_ABSOLUTE pidlI = NULL;
+        if (FAILED(SHParseDisplayName(paths[i], NULL, &pidlI, 0, NULL))) continue;
+        IShellFolder* parentI = NULL;
+        PCUITEMID_CHILD childI = NULL;
+        if (FAILED(SHBindToParent(pidlI, IID_PPV_ARGS(&parentI), &childI))) {
+            CoTaskMemFree(pidlI);
+            continue;
+        }
+        parentI->Release();
+        abs[count] = pidlI;
+        children[count] = childI;
+        count++;
+    }
+
+    IContextMenu* cm = NULL;
+    hr = parent->GetUIObjectOf(NULL, count, (PCUITEMID_CHILD_ARRAY)children,
+                               IID_IContextMenu, NULL, (void**)&cm);
+
+    // PIDLs were absolute; SHBindToParent's child pointers are interior to
+    // the absolute PIDL, so freeing each absolute PIDL also frees the child.
+    for (UINT i = 0; i < count; ++i) CoTaskMemFree(abs[i]);
+    free(children);
+    free(abs);
+
+    if (FAILED(hr)) { parent->Release(); return hr; }
+    *out_cm = cm;
+    *out_parent = parent;
+    return S_OK;
+}
+
+// Recursively walk an HMENU populated by QueryContextMenu and emit JSON.
+// Calls IContextMenu3::HandleMenuMsg2(WM_INITMENUPOPUP) before recursing
+// into each submenu — without this, lazy submenus (Send to, 7-Zip,
+// TortoiseSVN, …) come back empty.
+static void emit_menu(IContextMenu* cm, HMENU hm) {
+    IContextMenu3* cm3 = NULL;
+    cm->QueryInterface(IID_PPV_ARGS(&cm3)); // optional; may be NULL
+
+    int n = GetMenuItemCount(hm);
+    fputs("[", stdout);
+    int first = 1;
+    for (int i = 0; i < n; ++i) {
+        MENUITEMINFOW mii = { sizeof(mii) };
+        mii.fMask = MIIM_FTYPE | MIIM_ID | MIIM_SUBMENU | MIIM_STRING | MIIM_STATE;
+        mii.dwTypeData = NULL;
+        if (!GetMenuItemInfoW(hm, (UINT)i, TRUE, &mii)) continue;
+
+        if (!first) fputs(",", stdout);
+        first = 0;
+
+        if (mii.fType & MFT_SEPARATOR) {
+            fputs("{\"separator\":true}", stdout);
+            continue;
+        }
+
+        // Re-query with a buffer for the label.
+        wchar_t label[512] = { 0 };
+        mii.cch = _countof(label);
+        mii.dwTypeData = label;
+        mii.fMask = MIIM_FTYPE | MIIM_ID | MIIM_SUBMENU | MIIM_STRING | MIIM_STATE;
+        GetMenuItemInfoW(hm, (UINT)i, TRUE, &mii);
+
+        bool disabled = (mii.fState & (MFS_DISABLED | MFS_GRAYED)) != 0;
+
+        fputs("{", stdout);
+        fputs("\"label\":", stdout);
+        json_print_str(label);
+
+        if (mii.hSubMenu) {
+            // Populate lazy submenus before recursing.
+            if (cm3) {
+                LRESULT lr = 0;
+                cm3->HandleMenuMsg2(WM_INITMENUPOPUP,
+                                    (WPARAM)mii.hSubMenu,
+                                    (LPARAM)i, &lr);
+            }
+            fputs(",\"submenu\":", stdout);
+            emit_menu(cm, mii.hSubMenu);
+        } else {
+            // Leaf entry — emit id + canonical verb if available.
+            UINT idx = mii.wID >= CTX_ID_MIN ? (mii.wID - CTX_ID_MIN) : 0;
+            printf(",\"id\":%u", idx);
+            wchar_t verb[128] = { 0 };
+            HRESULT hv = cm->GetCommandString(idx, GCS_VERBW, NULL,
+                                              (LPSTR)verb, _countof(verb));
+            if (SUCCEEDED(hv) && verb[0]) {
+                fputs(",\"verb\":", stdout);
+                json_print_str(verb);
+            }
+        }
+        if (disabled) fputs(",\"disabled\":true", stdout);
+        fputs("}", stdout);
+    }
+    fputs("]", stdout);
+
+    if (cm3) cm3->Release();
+}
+
+static int verb_menu(int argc, wchar_t** argv) {
+    if (argc < 3) {
+        fwprintf(stderr, L"shellhelp: menu needs <path> [<path> ...]\n");
+        return 2;
+    }
+    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    if (FAILED(hr)) return (int)hr;
+
+    IContextMenu* cm = NULL;
+    IShellFolder* parent = NULL;
+    hr = build_context_menu(argc - 2, argv + 2, &cm, &parent);
+    if (FAILED(hr) || !cm) {
+        CoUninitialize();
+        fwprintf(stderr, L"shellhelp: menu build failed (0x%08lx)\n", (unsigned long)hr);
+        return 1;
+    }
+
+    HMENU hm = CreatePopupMenu();
+    hr = cm->QueryContextMenu(hm, 0, CTX_ID_MIN, CTX_ID_MAX,
+                              CMF_NORMAL | CMF_EXTENDEDVERBS);
+    if (FAILED(hr)) {
+        DestroyMenu(hm);
+        cm->Release();
+        parent->Release();
+        CoUninitialize();
+        return 1;
+    }
+
+    emit_menu(cm, hm);
+    fputs("\n", stdout);
+
+    DestroyMenu(hm);
+    cm->Release();
+    parent->Release();
+    CoUninitialize();
+    return 0;
+}
+
+static int verb_invoke(int argc, wchar_t** argv) {
+    if (argc < 4) {
+        fwprintf(stderr, L"shellhelp: invoke needs <id> <path> [<path> ...]\n");
+        return 2;
+    }
+    UINT id = (UINT)_wtoi(argv[2]);
+    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    if (FAILED(hr)) return (int)hr;
+
+    IContextMenu* cm = NULL;
+    IShellFolder* parent = NULL;
+    hr = build_context_menu(argc - 3, argv + 3, &cm, &parent);
+    if (FAILED(hr) || !cm) {
+        CoUninitialize();
+        return 1;
+    }
+
+    // Build the menu so any registered IDs are valid in the IContextMenu's
+    // internal state, even though we don't consult the HMENU.
+    HMENU hm = CreatePopupMenu();
+    cm->QueryContextMenu(hm, 0, CTX_ID_MIN, CTX_ID_MAX,
+                         CMF_NORMAL | CMF_EXTENDEDVERBS);
+
+    CMINVOKECOMMANDINFOEX ici = { sizeof(ici) };
+    ici.fMask = CMIC_MASK_UNICODE;
+    ici.hwnd = NULL;
+    ici.lpVerb  = MAKEINTRESOURCEA(id);
+    ici.lpVerbW = MAKEINTRESOURCEW(id);
+    ici.nShow = SW_SHOWNORMAL;
+    hr = cm->InvokeCommand((CMINVOKECOMMANDINFO*)&ici);
+
+    DestroyMenu(hm);
+    cm->Release();
+    parent->Release();
+    CoUninitialize();
+    return SUCCEEDED(hr) ? 0 : 1;
+}
+
 int wmain(int argc, wchar_t** argv) {
     if (argc < 2) {
-        fwprintf(stderr, L"shellhelp: needs verb (properties|trash|drives)\n");
+        fwprintf(stderr, L"shellhelp: needs verb (properties|trash|drives|menu|invoke)\n");
         return 2;
     }
     if (wcscmp(argv[1], L"properties") == 0) return verb_properties(argc, argv);
     if (wcscmp(argv[1], L"trash") == 0)      return verb_trash(argc, argv);
     if (wcscmp(argv[1], L"drives") == 0)     return verb_drives();
+    if (wcscmp(argv[1], L"menu") == 0)       return verb_menu(argc, argv);
+    if (wcscmp(argv[1], L"invoke") == 0)     return verb_invoke(argc, argv);
     fwprintf(stderr, L"shellhelp: unknown verb %ls\n", argv[1]);
     return 2;
 }

@@ -5,10 +5,28 @@ state lives in [`design.md`](./design.md); repository conventions live
 in [`../CLAUDE.md`](../CLAUDE.md). This file is the source of truth for
 **what's painted but not wired**, and **what hasn't been started**.
 
-Status as of the last commit on `claude/implement-simple-explorer-SxdNe`:
-**MVP**, not v1. The three direction skins render and the core file
-operations (list, copy, move, rename, delete, open) work, but several
-buttons in the chrome are decorative.
+Status as of the last commit on `claude/review-roadmap-MKEpx`:
+post-MVP, pre-v1. Phase 1 (chrome wiring) and Phase 1.5 (full Windows
+shell context menu) have shipped. The Workspace direction has been
+removed (one less skin to maintain); the remaining directions are
+Fluent (A) and Cmd (B). The remaining gap is multi-tabs, the Ctrl+K
+palette, and sort/view menus.
+
+## Shipped
+
+- **Phase 1 — chrome wiring** (commit `0b7242e`). Fluent window
+  controls, clickable breadcrumbs, Direction B rail navigation, dynamic
+  drives section in the Fluent sidebar (real free-space numbers from
+  `fs.listDrives()`).
+- **Phase 1.5 — full Windows shell context menu**. Two new helper
+  verbs in `tools/shellhelp.cpp` (`menu` walks `IContextMenu` →
+  emits a JSON tree; `invoke` calls `InvokeCommand` for the chosen
+  verb id). `src/pane.js` now renders the curated SimpleExplorer
+  items at the top, then asynchronously fills shell-extension entries
+  underneath, with hover-spawn submenus, a 3-second TTL cache, and
+  graceful fallback to the legacy curated-only list when the helper
+  isn't compiled. Helper still needs an MSVC build pass on a Windows
+  box (`tools/build.md`) to ship the binary.
 
 ## Known bugs
 
@@ -29,20 +47,22 @@ buttons in the chrome are decorative.
 
 ### Wired (works)
 
-- Direction switcher (A · Fluent / B · Cmd / C · Workspaces)
+- Direction switcher (A · Fluent / B · Cmd)
 - Theme toggle (light ↔ dark, per direction)
 - Layout picker (1, 2v, 2h, 3, 4 panes)
 - Back / Forward / Up navigation per pane
 - Search input (filters visible rows in the active pane)
+- Type-to-jump in the active pane (Windows Explorer style)
 - Row click (select), double-click (open), right-click (custom menu)
 - Pane click sets active pane
+- Clickable breadcrumb segments
+- Fluent window controls: minimize and close (maximize uses the OS title bar)
 - Right-click actions: Open, Open in VS Code, Open in Terminal,
   Copy path, Rename, Delete, Show in Explorer, Properties
 - Fluent command bar buttons: New folder · Copy · Rename · Delete · Compare
-- Workspace bottom dock: same set + "Copy → other pane" / "Compare panes"
-  shown when ≥ 2 panes
-- Fluent sidebar full quick-access list — click navigates active pane
-- Recent items in Fluent + Workspace sidebars — click navigates
+- Fluent sidebar quick-access + dynamic drives — click navigates active pane
+- Recent items in Fluent sidebar — click navigates
+- Direction B rail navigation (Home / Downloads / Docs)
 - Real Windows Properties dialog (via `extras/shellhelp.exe` when built;
   PowerShell fallback otherwise)
 - Recycle Bin via `IFileOperation` (helper) or
@@ -54,17 +74,11 @@ These render and look right, but clicking them does nothing today:
 
 | Where | Element | Should do |
 | --- | --- | --- |
-| All directions | Window controls `─ ☐ ✕` | minimize / maximize / exit via `Neutralino.window.*` |
-| All directions | Breadcrumb segments | click → navigate to that segment |
 | Fluent pane chrome | Tab `×` close, tab `+` add | implement multi-tabs per pane |
-| Direction B | Rail icons (Home / Pinned / Recent / Downloads / Docs / Drives) | click → navigate / open panel |
+| Direction B | Rail icons (Pinned / Recent / Drives) | open popover panels |
 | Direction B | Pane header View / Sort / More | sort dropdown, view-mode menu |
 | Direction B | Ctrl+K command palette | open palette overlay, route input to commands / path nav / fuzzy file search |
-| Direction C | Workspace tabs (Qt project / Triage / Compare runs / Research) | click → switch to that workspace's pane set |
-| Direction C | Workspace `+` button | "save current panes as workspace" |
-| Direction C | Sidebar Pinned items | click → navigate |
-| Direction C | Sidebar Drives (hardcoded "146 GB" / "892 GB") | populate from `fs.listDrives()` |
-| Direction C | Pane head "more" button, search icon | menu / search-in-pane |
+| Direction B | Pane chip (path) segments | click → navigate to that segment (currently one chip, not per-segment) |
 
 ### Not started — explicitly out of MVP scope
 
@@ -86,13 +100,19 @@ These render and look right, but clicking them does nothing today:
 
 ## Roadmap, sized and prioritized
 
-### Phase 1.5 — Full Windows shell context menu (~3 days)
+### ~~Phase 1.5 — Full Windows shell context menu~~ (shipped)
 
 > **Promoted from Phase 7.** The user explicitly wants the right-click
 > menu to match stock Explorer (Bosch File Services, FastSearch,
 > SWB-Shell, Open with Code, Open Git Bash, 7-Zip, TortoiseSVN, Send to,
 > Properties, …) — i.e. every installed shell extension, not the
 > curated short list we ship today.
+
+Implementation lives in `tools/shellhelp.cpp` (verbs `menu` + `invoke`)
+and `src/pane.js` (curated section + async shell fill + submenus +
+cache). Notes preserved below for context; further follow-ups (icons,
+keyboard navigation, watchdog timeout for hangy extensions) are tracked
+in [Open questions / debt](#open-questions--debt).
 
 #### Approach
 
@@ -268,19 +288,22 @@ the COM object (no shared state between calls).
   Use `IContextMenu` (universally supported); upgrade only if
   specific extensions misbehave.
 
-### Phase 1 — Stop the "buttons don't work" feel (1–2 hours, one commit)
+### ~~Phase 1 — Stop the "buttons don't work" feel~~ (shipped)
 
-Hits the most visible MVP gaps. No new architecture; just wire what's
-already painted.
+Shipped as commit `0b7242e`. Items wired:
 
 - Clickable breadcrumb segments in all three directions.
-- Direction B rail items navigate.
+- Direction B rail items navigate (Home / Downloads / Docs).
 - Direction C sidebar Pinned items navigate.
-- Direction C drives populated from `fs.listDrives()` instead of hardcoded.
-- Window controls (─ ☐ ✕) call `Neutralino.window.minimize() / maximize() /
-  unmaximize() / app.exit()`.
-- Compile `extras/shellhelp.exe` (you do this on a Windows box with MSVC
-  once; `scripts/run.ps1` already auto-builds when `cl` is on PATH).
+- Direction C drives populated from `fs.listDrives()`.
+- Direction A drives section (new) also driven by `fs.listDrives()`.
+- Fluent window controls (─ ☐ ✕) call
+  `Neutralino.window.minimize() / maximize() / unmaximize() / app.exit()`.
+
+Still pending: compile `extras/shellhelp.exe` on a Windows box with
+MSVC. Until then, drive list / properties / delete fall back to
+PowerShell (~250–400 ms) and the new shell context menu silently
+degrades to the curated-only list.
 
 ### Phase 2 — Real multi-tabs per pane (~half day)
 
@@ -291,15 +314,6 @@ in `localStorage` alongside existing pane state.
 
 Touches: `pane.js` (state shape), `app.js` (new actions: `tabNew`,
 `tabClose`, `tabSwitch`), `directions/fluent.js` (real tab bar).
-
-### Phase 3 — Workspace switching for Direction C (~half day)
-
-Workspaces today are decorative tabs. Make them real saved pane sets:
-
-- "Save current pane layout as workspace …" via the `+` button.
-- Click a workspace tab → swap the entire pane grid.
-- Persist via `localStorage` under `simple-explorer.workspaces`.
-- Default seeded set on first run matches the current decorative tabs.
 
 ### Phase 4 — Direction B command palette (~half day)
 
@@ -357,6 +371,45 @@ These need their own short plan before starting; rough cost in days.
   to kind icons. Requires the helper exe.
 - **File preview pane** (~2 days) — text / image / PDF / md preview;
   separate column, toggleable.
+- **Integrated terminal in Direction B** (~3–5 days) — VS Code-style
+  bottom panel with a real terminal emulator. Cmd direction only; the
+  Fluent skin keeps the existing right-click "Open in Terminal" external
+  spawn. Stack:
+  - Frontend: [`xterm.js`](https://xtermjs.org/) (same emulator VS Code
+    uses), rendered into a resizable bottom panel below `b-grid`.
+    Toggleable via Ctrl+\` and a rail icon. Multiple terminals as tabs.
+  - Backend: a new native helper verb `pty` that wraps the Windows
+    [ConPTY](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session)
+    APIs (`CreatePseudoConsole`, `ResizePseudoConsole`,
+    `ClosePseudoConsole`). Spawns the user's chosen shell under the
+    PTY and pipes bytes both ways. Lives in `tools/shellhelp.cpp`
+    alongside the existing verbs to keep the toolchain story unchanged.
+  - Shell selection (matches VS Code): on first launch, detect available
+    shells in PATH (`pwsh.exe` → `powershell.exe` → `cmd.exe` →
+    `bash.exe` from Git for Windows → WSL), present a one-time
+    quick-pick overlay, and persist the chosen shell to
+    `localStorage` under `simple-explorer.terminal.shell`. Settings
+    UI later allows changing the default and adding profiles.
+  - Working directory (matches VS Code): when a new terminal is
+    opened, its cwd is the active pane's current path at that
+    moment. Once opened, terminals do **not** auto-`cd` when the
+    active pane navigates — they're independent. Add a right-click
+    "Open in integrated terminal" action on folders that opens a
+    new terminal tab at that path (mirrors VS Code's command).
+  - IPC: bidirectional bytes between JS and the helper. Neutralino's
+    `os.spawnProcess` + `events.on('spawnedProcess', …)` carries
+    stdout/stderr in chunks; for stdin we use `os.updateSpawnedProcess`.
+    Resize events flow as JSON control messages on a sentinel-prefixed
+    line.
+  - Out of scope for v1: split terminals inside the panel, search,
+    profile UI beyond the first-launch picker, restoring sessions
+    across app restarts.
+  - Risks: ConPTY's escape-sequence translation is good but imperfect
+    (some TUI apps still misbehave on resize); Neutralino's chunked
+    output may need a 16 ms flush coalesce to avoid tearing. Cheap
+    fallback for environments without ConPTY (Windows < 1809): plain
+    `os.spawnProcess` of the shell with no PTY semantics — works for
+    line-oriented commands, breaks for vim/less.
 - **Drag-and-drop with the OS** (~2 days) — accept drops from stock
   Explorer (HTML5 dataTransfer to FS path resolution), drag from our
   panes back out (Neutralino currently can't initiate OS drags — needs

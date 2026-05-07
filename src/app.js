@@ -6,7 +6,6 @@ import * as fs from './fs.js';
 import { createPaneState, navigate, goBack, goForward, goUp } from './pane.js';
 import { renderFluent } from './directions/fluent.js';
 import { renderCmd } from './directions/cmd.js';
-import { renderWorkspace } from './directions/workspace.js';
 
 // Boot the Neutralino client. Safe to call before DOM ready; APIs queue until
 // the runtime handshake completes. No-op when running directly in a browser
@@ -25,13 +24,11 @@ const DEFAULT = {
   direction: 'fluent',
   themeA: 'light', layoutA: '2v',
   themeB: 'light', layoutB: '2v',
-  themeC: 'dark',  layoutC: '3',
 };
 
 const RENDERERS = {
-  fluent:    { fn: renderFluent,    themeKey: 'themeA', layoutKey: 'layoutA' },
-  cmd:       { fn: renderCmd,       themeKey: 'themeB', layoutKey: 'layoutB' },
-  workspace: { fn: renderWorkspace, themeKey: 'themeC', layoutKey: 'layoutC' },
+  fluent: { fn: renderFluent, themeKey: 'themeA', layoutKey: 'layoutA' },
+  cmd:    { fn: renderCmd,    themeKey: 'themeB', layoutKey: 'layoutB' },
 };
 
 const LAYOUTS = {
@@ -45,19 +42,40 @@ const LAYOUTS = {
 const settings = loadSettings();
 let panes = [];
 let activePane = 0;
+let homePath = '~';
+let drives = [];
 
 async function init() {
-  const home = (await fs.homeDir()) || '~';
+  homePath = (await fs.homeDir()) || '~';
   const seedPaths = [
-    home,
-    home,
-    home + (home.includes('\\') ? '\\Downloads' : '/Downloads'),
-    home + (home.includes('\\') ? '\\Documents' : '/Documents'),
+    homePath,
+    homePath,
+    quickAccessPath('Downloads'),
+    quickAccessPath('Documents'),
   ];
   panes = seedPaths.map((p, i) => createPaneState(i, p));
   await Promise.all(panes.map((p) => safeLoad(p)));
   render();
   bindGlobalKeys();
+  // Drives populate after first paint so list/render isn't blocked on a
+  // helper / PowerShell shell-out at startup.
+  fs.listDrives().then((d) => { drives = d; render(); }).catch(() => {});
+}
+
+function quickAccessPath(name) {
+  const sep = homePath.includes('\\') ? '\\' : '/';
+  return homePath + sep + name;
+}
+
+function railTarget(key) {
+  switch (key) {
+    case 'home':      return homePath;
+    case 'downloads': return quickAccessPath('Downloads');
+    case 'documents': return quickAccessPath('Documents');
+    case 'pictures':  return quickAccessPath('Pictures');
+    case 'desktop':   return quickAccessPath('Desktop');
+    default: return null; // pinned/recent/drives → popovers (out of scope)
+  }
 }
 
 async function safeLoad(state) {
@@ -79,6 +97,33 @@ function render() {
     layoutDef: LAYOUTS[settings[dir.layoutKey]] || LAYOUTS['2v'],
     panes,
     activePane,
+    home: homePath,
+    drives,
+    quickAccessPath,
+    railTarget,
+    async onWinCtl(kind) {
+      const N = window.Neutralino; if (!N) return;
+      // Each call wrapped individually — Neutralino 5.6.0 with the default
+      // (non-frameless) window mode can race with the OS title bar and
+      // leave the window in a degenerate state if these throw mid-toggle.
+      // The OS title bar still has its own ☐ / ─ / ✕, so on failure the
+      // user can recover from there.
+      if (kind === 'min') {
+        try { await N.window.minimize(); }
+        catch (e) { console.warn('window.minimize failed:', e); }
+      } else if (kind === 'max') {
+        // Always maximize — let the OS title bar handle un-maximize.
+        // The previous isMaximized() / unmaximize() toggle could send the
+        // window off-screen on multi-monitor / HiDPI setups.
+        try {
+          await N.window.maximize();
+          await N.window.show(); // safety net in case maximize hid us
+        } catch (e) { console.warn('window.maximize failed:', e); }
+      } else if (kind === 'close') {
+        try { await N.app.exit(); }
+        catch (e) { console.warn('app.exit failed:', e); }
+      }
+    },
     setActivePane(i) {
       // No-op when already active — re-rendering on every row click was
       // tearing down the row mid-double-click, so the dblclick event lost
@@ -237,13 +282,47 @@ function bindGlobalKeys() {
     else if (e.key === 'Backspace') { goUp(panes[activePane]).then(render); }
     else if (e.altKey && e.key === 'ArrowLeft') { goBack(panes[activePane]).then(render); }
     else if (e.altKey && e.key === 'ArrowRight') { goForward(panes[activePane]).then(render); }
+    else if (e.key === 'Escape') { typeBuf = ''; clearTimeout(typeBufTimer); }
+    else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      // Type-to-jump (Windows Explorer style): printable keys accumulate
+      // into a prefix buffer for 750 ms; the active pane jumps to the
+      // first row whose name starts with the buffer. Doesn't filter the
+      // list — selection moves only.
+      const ch = e.key.toLowerCase();
+      if (!/[a-z0-9._\-+ ]/.test(ch)) return;
+      typeBuf += ch;
+      clearTimeout(typeBufTimer);
+      typeBufTimer = setTimeout(() => { typeBuf = ''; }, 750);
+      typeJump(typeBuf);
+    }
   });
+}
+
+let typeBuf = '';
+let typeBufTimer = null;
+
+function typeJump(prefix) {
+  const pane = panes[activePane];
+  if (!pane || !pane.entries.length) return;
+  const found = pane.entries.find((it) => it.name.toLowerCase().startsWith(prefix));
+  if (!found) return;
+  pane.selected.clear();
+  pane.selected.add(found.name);
+  render();
+  // After re-render, find the matching row in the active pane and scroll
+  // it into view. CSS.escape handles names with quotes / backslashes.
+  const sel = `.row[data-name="${CSS.escape(found.name)}"]`;
+  const row = document.querySelector(`.a-pane--active ${sel}, .b-pane--active ${sel}`);
+  row?.scrollIntoView({ block: 'nearest' });
 }
 
 function loadSettings() {
   try {
     const raw = JSON.parse(localStorage.getItem(STATE_KEY) || '{}');
-    return { ...DEFAULT, ...raw };
+    const merged = { ...DEFAULT, ...raw };
+    // Migrate users who had the now-removed Workspace direction selected.
+    if (!RENDERERS[merged.direction]) merged.direction = 'fluent';
+    return merged;
   } catch {
     return { ...DEFAULT };
   }
