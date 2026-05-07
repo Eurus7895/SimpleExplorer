@@ -394,8 +394,11 @@ kbd {
   background: var(--surface2); border: 1px solid var(--border); border-radius: 13px;
   font-size: 12px; color: var(--text);
 }
+.b-chip__segs { display: inline-flex; align-items: center; }
 .b-chip__pre { color: var(--text-mute); }
 .b-chip__last { font-weight: 600; }
+.b-chip__seg { cursor: pointer; padding: 0 1px; border-radius: 2px; }
+.b-chip__seg:hover { color: var(--text); background: var(--border-soft); }
 .b-pane__foot {
   height: 26px; padding: 0 12px;
   display: flex; align-items: center; gap: 12px;

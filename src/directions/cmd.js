@@ -3,7 +3,7 @@
 // header. Visuals trace explorer-cmd.jsx in the design bundle.
 
 import { iconHTML } from '../icons.js';
-import { renderRows } from '../pane.js';
+import { renderRows, buildSegPath } from '../pane.js';
 import { RAIL_ITEMS } from '../sidebar-data.js';
 import * as fs from '../fs.js';
 
@@ -89,21 +89,14 @@ function paneCard(ctx, pane, i) {
   card.addEventListener('click', () => ctx.setActivePane(i));
 
   const head = el('div', 'b-pane__head');
-  const segs = fs.pathSegments(pane.path);
-  const last = segs[segs.length - 1] || 'home';
-  const prefix = segs.slice(0, -1).join('/');
-  head.innerHTML = `
-    <div class="b-chip">
-      ${iconHTML('folder-open', 13)}
-      ${prefix ? `<span class="b-chip__pre">${prefix}/</span>` : ''}
-      <span class="b-chip__last">${last}</span>
-      ${iconHTML('fwd', 10)}
-    </div>
-    <div class="spacer"></div>
+  head.appendChild(chip(ctx, pane, i));
+  const spacer = el('div', 'spacer');
+  head.appendChild(spacer);
+  head.insertAdjacentHTML('beforeend', `
     <button class="iconbtn iconbtn--sm" title="View">${iconHTML('list', 14)}</button>
     <button class="iconbtn iconbtn--sm" title="Sort">${iconHTML('sort', 14)}</button>
     <button class="iconbtn iconbtn--sm" title="More">${iconHTML('more', 14)}</button>
-  `;
+  `);
   card.appendChild(head);
 
   const rows = renderRows(pane, {
@@ -120,6 +113,40 @@ function paneCard(ctx, pane, i) {
   `;
   card.appendChild(foot);
   return card;
+}
+
+function chip(ctx, pane, paneIdx) {
+  const wrap = el('div', 'b-chip');
+  wrap.insertAdjacentHTML('beforeend', iconHTML('folder-open', 13));
+  // Inner container so each segment is its own click target, but the
+  // chip's flex `gap` doesn't insert space between every segment — slashes
+  // provide the visual separation.
+  const segWrap = el('span', 'b-chip__segs');
+  const segs = fs.pathSegments(pane.path);
+  const win = pane.path.includes('\\');
+  const lastIdx = segs.length - 1;
+  segs.forEach((seg, i) => {
+    const isLast = i === lastIdx;
+    const span = el('span', isLast ? 'b-chip__last' : 'b-chip__pre');
+    span.textContent = isLast ? seg : seg + '/';
+    if (!isLast) {
+      const target = buildSegPath(segs, i, win);
+      span.classList.add('b-chip__seg');
+      span.addEventListener('click', (e) => {
+        e.stopPropagation();
+        ctx.onPaneNav(paneIdx, target);
+      });
+    }
+    segWrap.appendChild(span);
+  });
+  if (!segs.length) {
+    const span = el('span', 'b-chip__last');
+    span.textContent = 'home';
+    segWrap.appendChild(span);
+  }
+  wrap.appendChild(segWrap);
+  wrap.insertAdjacentHTML('beforeend', iconHTML('fwd', 10));
+  return wrap;
 }
 
 function pane3rdAware(ctx, i, card) {

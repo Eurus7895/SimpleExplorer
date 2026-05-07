@@ -278,7 +278,7 @@ export function renderBreadcrumb(path, onSegmentClick) {
   return wrap;
 }
 
-function buildSegPath(segs, idx, win) {
+export function buildSegPath(segs, idx, win) {
   const parts = segs.slice(0, idx + 1);
   if (win) {
     // First segment is the drive ("C:") — always keep its trailing slash.

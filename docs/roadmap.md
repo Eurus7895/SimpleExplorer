@@ -85,7 +85,6 @@ These render and look right, but clicking them does nothing today:
 | Direction B | Rail icons (Pinned / Recent / Drives) | open popover panels |
 | Direction B | Pane header View / Sort / More | sort dropdown, view-mode menu |
 | Direction B | Ctrl+K command palette | open palette overlay, route input to commands / path nav / fuzzy file search |
-| Direction B | Pane chip (path) segments | click → navigate to that segment (currently one chip, not per-segment) |
 
 ### Not started — explicitly out of MVP scope
 
@@ -311,6 +310,37 @@ Still pending: compile `extras/shellhelp.exe` on a Windows box with
 MSVC. Until then, drive list / properties / delete fall back to
 PowerShell (~250–400 ms) and the new shell context menu silently
 degrades to the curated-only list.
+
+### Phase 3 — Folder background right-click + resizable panes (~half day each)
+
+**3a · Empty-space context menu.** Right-clicking the blank area of a
+pane (below the last row, or anywhere when the folder is empty) does
+nothing today. Wire a `contextmenu` listener on `.rows` that fires
+only when the target is the container itself / `.rows__empty`, and
+open a folder-scope menu via a new `showFolderContextMenu(x, y, pane)`
+in `pane.js`. Curated items: Open in VS Code · Open in Terminal ·
+New folder · Refresh · Show in Explorer · Properties. Below those,
+async-fill `helperMenu([pane.path])` so the OS shell extensions
+(Git Bash, 7-Zip, TortoiseSVN, Send to, …) appear for the folder
+itself. Touches: `pane.js` (new menu helper), `app.js` (`refresh`
+action; extend `reveal` to fall back to `openInOS(pane.path)` when
+nothing is selected).
+
+**3b · Resizable panes.** Layouts (`2v`, `2h`, `3`, `4`) currently use
+a fixed 1fr 1fr grid with no gutter. Add a new `src/layout.js`
+exporting `LAYOUT_DEFS` + `applyLayout(grid, layoutId, splits, paneCards, onChange)`
+that sets `gridTemplateColumns/Rows` with a 6 px gutter track,
+places each card by explicit `grid-column / grid-row`, and inserts
+`splitter--col` / `splitter--row` divs in the gutter tracks. Drag
+clamps the ratio to 0.1 – 0.9, calls `onChange`, which persists +
+re-renders. Per-layout split ratios live in
+`simple-explorer.splits` (one shared map keyed by layout id;
+defaults 0.5). Splitters per layout: `1` none · `2v` 1 vertical ·
+`2h` 1 horizontal · `3` vertical (top row) + horizontal (between
+top row and full-width bottom) · `4` 1 vertical + 1 horizontal
+spanning both axes. `pane3rdAware` (third-pane full-width) folds
+into `applyLayout`. Both directions swap their `grid.style.gridTemplate*`
++ `appendChild` lines for one `applyLayout(...)` call.
 
 ### ~~Phase 2 — Real multi-tabs per pane~~ (shipped)
 
