@@ -377,23 +377,33 @@ These need their own short plan before starting; rough cost in days.
   spawn. Stack:
   - Frontend: [`xterm.js`](https://xtermjs.org/) (same emulator VS Code
     uses), rendered into a resizable bottom panel below `b-grid`.
-    Toggleable via Ctrl+\` and a rail icon. Multiple terminals as tabs;
-    the active terminal's working directory follows the active pane's
-    path on demand (a "cd here" button), not automatically.
+    Toggleable via Ctrl+\` and a rail icon. Multiple terminals as tabs.
   - Backend: a new native helper verb `pty` that wraps the Windows
     [ConPTY](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session)
     APIs (`CreatePseudoConsole`, `ResizePseudoConsole`,
-    `ClosePseudoConsole`). Spawns the user's chosen shell (`pwsh.exe`
-    → `powershell.exe` → `cmd.exe` fallback chain) under the PTY and
-    pipes bytes both ways. Lives in `tools/shellhelp.cpp` alongside
-    the existing verbs to keep the toolchain story unchanged.
+    `ClosePseudoConsole`). Spawns the user's chosen shell under the
+    PTY and pipes bytes both ways. Lives in `tools/shellhelp.cpp`
+    alongside the existing verbs to keep the toolchain story unchanged.
+  - Shell selection (matches VS Code): on first launch, detect available
+    shells in PATH (`pwsh.exe` → `powershell.exe` → `cmd.exe` →
+    `bash.exe` from Git for Windows → WSL), present a one-time
+    quick-pick overlay, and persist the chosen shell to
+    `localStorage` under `simple-explorer.terminal.shell`. Settings
+    UI later allows changing the default and adding profiles.
+  - Working directory (matches VS Code): when a new terminal is
+    opened, its cwd is the active pane's current path at that
+    moment. Once opened, terminals do **not** auto-`cd` when the
+    active pane navigates — they're independent. Add a right-click
+    "Open in integrated terminal" action on folders that opens a
+    new terminal tab at that path (mirrors VS Code's command).
   - IPC: bidirectional bytes between JS and the helper. Neutralino's
     `os.spawnProcess` + `events.on('spawnedProcess', …)` carries
     stdout/stderr in chunks; for stdin we use `os.updateSpawnedProcess`.
     Resize events flow as JSON control messages on a sentinel-prefixed
     line.
   - Out of scope for v1: split terminals inside the panel, search,
-    profile picker UI, restoring sessions across app restarts.
+    profile UI beyond the first-launch picker, restoring sessions
+    across app restarts.
   - Risks: ConPTY's escape-sequence translation is good but imperfect
     (some TUI apps still misbehave on resize); Neutralino's chunked
     output may need a 16 ms flush coalesce to avoid tearing. Cheap
