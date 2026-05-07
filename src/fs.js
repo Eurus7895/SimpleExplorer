@@ -214,7 +214,9 @@ export async function listDir(path) {
   // platforms.
   const real = entries.filter((e) => e.entry !== '.' && e.entry !== '..');
   await Promise.all(real.map(async (e) => {
-    const full = e.path || joinPath(path, e.entry);
+    const name = e.entry || e.name || '';
+    const full = e.path || joinPath(path, name);
+    const isDir = e.type === 'DIRECTORY';
     let size = 0, modified_ms = 0;
     try {
       const s = await N.filesystem.getStats(full);
@@ -222,11 +224,11 @@ export async function listDir(path) {
       modified_ms = s.modifiedAt || 0;
     } catch {}
     out.push({
-      name: e.entry,
-      is_dir: e.type === 'DIRECTORY',
+      name,
+      is_dir: isDir,
       size,
       modified_ms,
-      extension: e.type === 'FILE' ? extOf(e.entry) : '',
+      extension: isDir ? '' : extOf(name),
       path: full,
     });
   }));
