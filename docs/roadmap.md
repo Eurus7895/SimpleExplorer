@@ -371,6 +371,35 @@ These need their own short plan before starting; rough cost in days.
   to kind icons. Requires the helper exe.
 - **File preview pane** (~2 days) — text / image / PDF / md preview;
   separate column, toggleable.
+- **Integrated terminal in Direction B** (~3–5 days) — VS Code-style
+  bottom panel with a real terminal emulator. Cmd direction only; the
+  Fluent skin keeps the existing right-click "Open in Terminal" external
+  spawn. Stack:
+  - Frontend: [`xterm.js`](https://xtermjs.org/) (same emulator VS Code
+    uses), rendered into a resizable bottom panel below `b-grid`.
+    Toggleable via Ctrl+\` and a rail icon. Multiple terminals as tabs;
+    the active terminal's working directory follows the active pane's
+    path on demand (a "cd here" button), not automatically.
+  - Backend: a new native helper verb `pty` that wraps the Windows
+    [ConPTY](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session)
+    APIs (`CreatePseudoConsole`, `ResizePseudoConsole`,
+    `ClosePseudoConsole`). Spawns the user's chosen shell (`pwsh.exe`
+    → `powershell.exe` → `cmd.exe` fallback chain) under the PTY and
+    pipes bytes both ways. Lives in `tools/shellhelp.cpp` alongside
+    the existing verbs to keep the toolchain story unchanged.
+  - IPC: bidirectional bytes between JS and the helper. Neutralino's
+    `os.spawnProcess` + `events.on('spawnedProcess', …)` carries
+    stdout/stderr in chunks; for stdin we use `os.updateSpawnedProcess`.
+    Resize events flow as JSON control messages on a sentinel-prefixed
+    line.
+  - Out of scope for v1: split terminals inside the panel, search,
+    profile picker UI, restoring sessions across app restarts.
+  - Risks: ConPTY's escape-sequence translation is good but imperfect
+    (some TUI apps still misbehave on resize); Neutralino's chunked
+    output may need a 16 ms flush coalesce to avoid tearing. Cheap
+    fallback for environments without ConPTY (Windows < 1809): plain
+    `os.spawnProcess` of the shell with no PTY semantics — works for
+    line-oriented commands, breaks for vim/less.
 - **Drag-and-drop with the OS** (~2 days) — accept drops from stock
   Explorer (HTML5 dataTransfer to FS path resolution), drag from our
   panes back out (Neutralino currently can't initiate OS drags — needs
