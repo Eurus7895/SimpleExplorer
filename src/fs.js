@@ -46,34 +46,56 @@ const SAMPLE = {
 };
 
 // ── Path helpers (sync, no native) ──────────────────────────────────────────
+
+// Coerce a path string into a canonical form for the platform. Catches
+// stray forward-slashes mid-Windows-path (e.g. C:/Users) and leading
+// slashes on Windows roots (e.g. /C:) before they end up in navigation
+// state, history, or localStorage. Idempotent.
+export function normalizePath(path) {
+  if (!path) return path;
+  let p = String(path);
+  // /C: or /C:/foo  ->  C: or C:/foo
+  p = p.replace(/^\/+([A-Za-z]:)/, '$1');
+  if (/^[A-Za-z]:/.test(p)) {
+    p = p.replace(/\//g, '\\');
+    p = p.replace(/\\+/g, '\\');
+    if (/^[A-Za-z]:$/.test(p)) p += '\\';
+  }
+  return p;
+}
+
 export function joinPath(parent, name) {
   if (!parent) return name;
-  const sep = parent.includes('\\') ? '\\' : '/';
-  if (parent.endsWith(sep)) return parent + name;
-  return parent + sep + name;
+  const norm = normalizePath(parent);
+  const sep = /^[A-Za-z]:/.test(norm) || norm.includes('\\') ? '\\' : '/';
+  if (norm.endsWith(sep)) return norm + name;
+  return norm + sep + name;
 }
 
 export function parentPath(path) {
-  const sep = path.includes('\\') ? '\\' : '/';
-  const idx = path.lastIndexOf(sep);
-  if (idx <= 0) return path;
-  if (path.match(/^[A-Z]:\\?$/i)) return path;
-  const up = path.slice(0, idx);
-  if (/^[A-Z]:$/i.test(up)) return up + '\\';
+  const norm = normalizePath(path);
+  const sep = /^[A-Za-z]:/.test(norm) || norm.includes('\\') ? '\\' : '/';
+  const idx = norm.lastIndexOf(sep);
+  if (idx <= 0) return norm;
+  if (norm.match(/^[A-Za-z]:\\?$/)) return norm;
+  const up = norm.slice(0, idx);
+  if (/^[A-Za-z]:$/.test(up)) return up + '\\';
   return up || sep;
 }
 
 export function basename(path) {
-  const sep = path.includes('\\') ? '\\' : '/';
-  const idx = path.lastIndexOf(sep);
-  return idx === -1 ? path : path.slice(idx + 1);
+  const norm = normalizePath(path);
+  const sep = /^[A-Za-z]:/.test(norm) || norm.includes('\\') ? '\\' : '/';
+  const idx = norm.lastIndexOf(sep);
+  return idx === -1 ? norm : norm.slice(idx + 1);
 }
 
 export function pathSegments(path) {
-  if (/^[A-Z]:/i.test(path)) {
-    return path.replace(/[\\/]+$/, '').split(/[\\/]+/);
+  const norm = normalizePath(path);
+  if (/^[A-Za-z]:/.test(norm)) {
+    return norm.replace(/[\\/]+$/, '').split(/[\\/]+/);
   }
-  return path.replace(/^\//, '').replace(/\/+$/, '').split('/').filter(Boolean);
+  return norm.replace(/^\//, '').replace(/\/+$/, '').split('/').filter(Boolean);
 }
 
 export function formatSize(bytes) {

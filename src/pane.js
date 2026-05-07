@@ -23,25 +23,27 @@ export function createPaneState(id, initialPath) {
 }
 
 export async function loadPath(state, path) {
+  const norm = fs.normalizePath(path);
   state.loading = true;
-  state.path = path;
+  state.path = norm;
   state.entries = [];
   state.selected.clear();
   try {
-    state.entries = await fs.listDir(path);
+    state.entries = await fs.listDir(norm);
   } catch (e) {
     state.entries = [];
-    console.warn('listDir failed', path, e);
+    console.warn('listDir failed', norm, e);
   }
   state.loading = false;
-  pushRecent(path);
+  pushRecent(norm);
 }
 
 export async function navigate(state, path) {
+  const norm = fs.normalizePath(path);
   state.history = state.history.slice(0, state.historyIdx + 1);
-  state.history.push(path);
+  state.history.push(norm);
   state.historyIdx = state.history.length - 1;
-  await loadPath(state, path);
+  await loadPath(state, norm);
 }
 
 export async function goBack(state) {
@@ -62,15 +64,28 @@ export async function goUp(state) {
 
 export function pushRecent(path) {
   try {
-    const list = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
-    const next = [path, ...list.filter((p) => p !== path)].slice(0, MAX_RECENT);
+    const norm = fs.normalizePath(path);
+    const list = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]')
+      .map((p) => fs.normalizePath(p));
+    const next = [norm, ...list.filter((p) => p !== norm)].slice(0, MAX_RECENT);
     localStorage.setItem(RECENT_KEY, JSON.stringify(next));
   } catch {}
 }
 
+// Reads recents, normalizing each entry and dropping duplicates that arose
+// before the path normalization was added (e.g. /C: and C:\ collapse to one).
 export function getRecent() {
   try {
-    return JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
+    const raw = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
+    const seen = new Set();
+    const out = [];
+    for (const p of raw) {
+      const n = fs.normalizePath(p);
+      if (seen.has(n)) continue;
+      seen.add(n);
+      out.push(n);
+    }
+    return out;
   } catch {
     return [];
   }

@@ -18,6 +18,18 @@ body {
 }
 .spacer { flex: 1; }
 .icn { display: inline-block; vertical-align: middle; flex-shrink: 0; }
+
+/* Scrollbars driven by theme tokens so dark mode doesn't show OS-light bars. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--surface2); }
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border: 2px solid var(--surface2);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+::-webkit-scrollbar-corner { background: var(--surface2); }
+* { scrollbar-color: var(--border) var(--surface2); scrollbar-width: thin; }
 svg.icn { display: inline-block; }
 
 input { font: inherit; color: inherit; }
