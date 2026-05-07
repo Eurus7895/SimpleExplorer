@@ -285,7 +285,40 @@ function bindGlobalKeys() {
     else if (e.key === 'Backspace') { goUp(panes[activePane]).then(render); }
     else if (e.altKey && e.key === 'ArrowLeft') { goBack(panes[activePane]).then(render); }
     else if (e.altKey && e.key === 'ArrowRight') { goForward(panes[activePane]).then(render); }
+    else if (e.key === 'Escape') { typeBuf = ''; clearTimeout(typeBufTimer); }
+    else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      // Type-to-jump (Windows Explorer style): printable keys accumulate
+      // into a prefix buffer for 750 ms; the active pane jumps to the
+      // first row whose name starts with the buffer. Doesn't filter the
+      // list — selection moves only.
+      const ch = e.key.toLowerCase();
+      if (!/[a-z0-9._\-+ ]/.test(ch)) return;
+      typeBuf += ch;
+      clearTimeout(typeBufTimer);
+      typeBufTimer = setTimeout(() => { typeBuf = ''; }, 750);
+      typeJump(typeBuf);
+    }
   });
+}
+
+let typeBuf = '';
+let typeBufTimer = null;
+
+function typeJump(prefix) {
+  const pane = panes[activePane];
+  if (!pane || !pane.entries.length) return;
+  const found = pane.entries.find((it) => it.name.toLowerCase().startsWith(prefix));
+  if (!found) return;
+  pane.selected.clear();
+  pane.selected.add(found.name);
+  render();
+  // After re-render, find the matching row in the active pane and scroll
+  // it into view. CSS.escape handles names with quotes / backslashes.
+  const sel = `.row[data-name="${CSS.escape(found.name)}"]`;
+  const row = document.querySelector(
+    `.a-pane--active ${sel}, .b-pane--active ${sel}, .c-pane--active ${sel}`
+  );
+  row?.scrollIntoView({ block: 'nearest' });
 }
 
 function loadSettings() {
