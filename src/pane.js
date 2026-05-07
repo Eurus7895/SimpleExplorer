@@ -9,9 +9,8 @@ import * as fs from './fs.js';
 const RECENT_KEY = 'simple-explorer.recent';
 const MAX_RECENT = 12;
 
-export function createPaneState(id, initialPath) {
+export function createTabState(initialPath) {
   return {
-    id,
     path: initialPath,
     history: [initialPath],
     historyIdx: 0,
@@ -20,6 +19,67 @@ export function createPaneState(id, initialPath) {
     loading: false,
     filter: '',
   };
+}
+
+// A pane owns a list of tabs. Active-tab fields are mirrored on the pane so
+// existing nav/render code keeps reading state.path / state.entries directly;
+// syncActiveTab() copies them back into pane.tabs[activeTabIdx] after each
+// mutation so a tab's history survives a switch-away-and-back.
+export function createPaneState(id, initialPath, tabPaths, activeTabIdx = 0) {
+  const seeds = tabPaths && tabPaths.length ? tabPaths : [initialPath];
+  const tabs = seeds.map((p) => createTabState(p));
+  const idx = Math.min(Math.max(0, activeTabIdx), tabs.length - 1);
+  const pane = { id, tabs, activeTabIdx: idx };
+  hydrateFromTab(pane, tabs[idx]);
+  return pane;
+}
+
+const TAB_FIELDS = ['path', 'history', 'historyIdx', 'selected', 'entries', 'loading', 'filter'];
+
+function hydrateFromTab(pane, tab) {
+  for (const k of TAB_FIELDS) pane[k] = tab[k];
+}
+
+function syncActiveTab(pane) {
+  const tab = pane.tabs[pane.activeTabIdx];
+  if (!tab) return;
+  for (const k of TAB_FIELDS) tab[k] = pane[k];
+}
+
+export function tabSnapshot(pane) {
+  return pane.tabs.map((t) => t.path);
+}
+
+export async function tabNew(pane, path) {
+  syncActiveTab(pane);
+  const tab = createTabState(path);
+  pane.tabs.push(tab);
+  pane.activeTabIdx = pane.tabs.length - 1;
+  hydrateFromTab(pane, tab);
+  await loadPath(pane, path);
+}
+
+export async function tabSwitch(pane, idx) {
+  if (idx === pane.activeTabIdx || idx < 0 || idx >= pane.tabs.length) return;
+  syncActiveTab(pane);
+  pane.activeTabIdx = idx;
+  const tab = pane.tabs[idx];
+  hydrateFromTab(pane, tab);
+  // Refresh entries — restored / never-listed tabs only carry a path snapshot.
+  if (!tab.entries.length) await loadPath(pane, pane.path);
+}
+
+export async function tabClose(pane, idx) {
+  if (pane.tabs.length <= 1) return false;
+  syncActiveTab(pane);
+  const wasActive = idx === pane.activeTabIdx;
+  pane.tabs.splice(idx, 1);
+  if (pane.activeTabIdx >= pane.tabs.length) pane.activeTabIdx = pane.tabs.length - 1;
+  else if (idx < pane.activeTabIdx) pane.activeTabIdx -= 1;
+  const tab = pane.tabs[pane.activeTabIdx];
+  hydrateFromTab(pane, tab);
+  if (wasActive && !tab.entries.length) await loadPath(pane, pane.path);
+  return true;
 }
 
 export async function loadPath(state, path) {
@@ -36,6 +96,7 @@ export async function loadPath(state, path) {
   }
   state.loading = false;
   pushRecent(norm);
+  if (state.tabs) syncActiveTab(state);
 }
 
 export async function navigate(state, path) {

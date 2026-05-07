@@ -3,7 +3,7 @@
 // that paints the chrome around the panes.
 
 import * as fs from './fs.js';
-import { createPaneState, navigate, goBack, goForward, goUp } from './pane.js';
+import { createPaneState, navigate, goBack, goForward, goUp, loadPath, tabNew, tabClose, tabSwitch, tabSnapshot } from './pane.js';
 import { renderFluent } from './directions/fluent.js';
 import { renderCmd } from './directions/cmd.js';
 
@@ -20,6 +20,7 @@ if (window.Neutralino) {
 }
 
 const STATE_KEY = 'simple-explorer.state';
+const TABS_KEY = 'simple-explorer.tabs';
 const DEFAULT = {
   direction: 'fluent',
   themeA: 'light', layoutA: '2v',
@@ -53,7 +54,15 @@ async function init() {
     quickAccessPath('Downloads'),
     quickAccessPath('Documents'),
   ];
-  panes = seedPaths.map((p, i) => createPaneState(i, p));
+  const saved = loadTabs();
+  panes = seedPaths.map((p, i) => {
+    const persisted = saved && saved[i];
+    return createPaneState(
+      i, p,
+      persisted ? persisted.tabs : null,
+      persisted ? persisted.activeTabIdx : 0,
+    );
+  });
   await Promise.all(panes.map((p) => safeLoad(p)));
   render();
   bindGlobalKeys();
@@ -80,7 +89,7 @@ function railTarget(key) {
 
 async function safeLoad(state) {
   try {
-    state.entries = await fs.listDir(state.path);
+    await loadPath(state, state.path);
   } catch {
     state.entries = [];
   }
@@ -136,11 +145,14 @@ function render() {
     setTheme(t) { settings[dir.themeKey] = t; saveSettings(); render(); },
     setLayout(l) { settings[dir.layoutKey] = l; saveSettings(); render(); },
     onActivateEntry: handleActivate,
-    onPaneNav: async (i, path) => { await navigate(panes[i], path); render(); },
-    onPaneBack: async (i) => { await goBack(panes[i]); render(); },
-    onPaneForward: async (i) => { await goForward(panes[i]); render(); },
-    onPaneUp: async (i) => { await goUp(panes[i]); render(); },
+    onPaneNav: async (i, path) => { await navigate(panes[i], path); saveTabs(); render(); },
+    onPaneBack: async (i) => { await goBack(panes[i]); saveTabs(); render(); },
+    onPaneForward: async (i) => { await goForward(panes[i]); saveTabs(); render(); },
+    onPaneUp: async (i) => { await goUp(panes[i]); saveTabs(); render(); },
     onFilter: (i, q) => { panes[i].filter = q; render(); },
+    onTabNew: async (i) => { await tabNew(panes[i], panes[i].path); saveTabs(); render(); },
+    onTabClose: async (i, tabIdx) => { if (await tabClose(panes[i], tabIdx)) { saveTabs(); render(); } },
+    onTabSwitch: async (i, tabIdx) => { await tabSwitch(panes[i], tabIdx); saveTabs(); render(); },
     onAction: (action) => doAction(action),
     rerender: render,
   };
@@ -330,6 +342,26 @@ function loadSettings() {
 
 function saveSettings() {
   localStorage.setItem(STATE_KEY, JSON.stringify(settings));
+}
+
+function loadTabs() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(TABS_KEY) || 'null');
+    if (!Array.isArray(raw)) return null;
+    return raw;
+  } catch {
+    return null;
+  }
+}
+
+function saveTabs() {
+  try {
+    const payload = panes.map((p) => ({
+      tabs: tabSnapshot(p),
+      activeTabIdx: p.activeTabIdx,
+    }));
+    localStorage.setItem(TABS_KEY, JSON.stringify(payload));
+  } catch {}
 }
 
 init();

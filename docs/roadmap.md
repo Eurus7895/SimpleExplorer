@@ -6,11 +6,11 @@ in [`../CLAUDE.md`](../CLAUDE.md). This file is the source of truth for
 **what's painted but not wired**, and **what hasn't been started**.
 
 Status as of the last commit on `claude/review-roadmap-MKEpx`:
-post-MVP, pre-v1. Phase 1 (chrome wiring) and Phase 1.5 (full Windows
-shell context menu) have shipped. The Workspace direction has been
-removed (one less skin to maintain); the remaining directions are
-Fluent (A) and Cmd (B). The remaining gap is multi-tabs, the Ctrl+K
-palette, and sort/view menus.
+post-MVP, pre-v1. Phase 1 (chrome wiring), Phase 1.5 (full Windows
+shell context menu), and Phase 2 (real multi-tabs per pane) have
+shipped. The Workspace direction has been removed (one less skin to
+maintain); the remaining directions are Fluent (A) and Cmd (B). The
+remaining gap is the Ctrl+K palette and sort/view menus.
 
 ## Shipped
 
@@ -18,6 +18,14 @@ palette, and sort/view menus.
   controls, clickable breadcrumbs, Direction B rail navigation, dynamic
   drives section in the Fluent sidebar (real free-space numbers from
   `fs.listDrives()`).
+- **Phase 2 — real multi-tabs per pane**. Each Fluent pane now owns a
+  tab list (`pane.tabs`); each tab has its own path, history,
+  selection, entries, and filter. `+` opens a new tab at the active
+  tab's path; `×` closes a tab (hidden when only one tab remains —
+  closing the last tab is a no-op, layout-driven pane removal stays
+  in Phase 6). State persists under `simple-explorer.tabs` and is
+  rehydrated on launch; non-active tabs lazy-list their entries on
+  first switch.
 - **Phase 1.5 — full Windows shell context menu**. Two new helper
   verbs in `tools/shellhelp.cpp` (`menu` walks `IContextMenu` →
   emits a JSON tree; `invoke` calls `InvokeCommand` for the chosen
@@ -74,7 +82,6 @@ These render and look right, but clicking them does nothing today:
 
 | Where | Element | Should do |
 | --- | --- | --- |
-| Fluent pane chrome | Tab `×` close, tab `+` add | implement multi-tabs per pane |
 | Direction B | Rail icons (Pinned / Recent / Drives) | open popover panels |
 | Direction B | Pane header View / Sort / More | sort dropdown, view-mode menu |
 | Direction B | Ctrl+K command palette | open palette overlay, route input to commands / path nav / fuzzy file search |
@@ -305,15 +312,16 @@ MSVC. Until then, drive list / properties / delete fall back to
 PowerShell (~250–400 ms) and the new shell context menu silently
 degrades to the curated-only list.
 
-### Phase 2 — Real multi-tabs per pane (~half day)
+### ~~Phase 2 — Real multi-tabs per pane~~ (shipped)
 
-Tabs in Fluent's pane chrome currently render a single static label. Make
-them real: state per tab (path, history, selection), `+` opens a new tab
-in the pane, `×` closes the tab (close last → close pane). Persist tabs
-in `localStorage` alongside existing pane state.
-
-Touches: `pane.js` (state shape), `app.js` (new actions: `tabNew`,
-`tabClose`, `tabSwitch`), `directions/fluent.js` (real tab bar).
+Each Fluent pane carries a `tabs` array (path / history / selection /
+entries / filter per tab); active-tab fields are mirrored on the pane
+object so existing nav/render code is unchanged. `pane.js` exports
+`tabNew` / `tabClose` / `tabSwitch` / `tabSnapshot`; `app.js`
+persists `panes[].tabs[].path` + `activeTabIdx` under
+`simple-explorer.tabs`; `directions/fluent.js` renders the real tab
+bar. Closing the last tab is a no-op (the × is hidden) — coupling
+tab close to layout shrink stays in Phase 6.
 
 ### Phase 4 — Direction B command palette (~half day)
 
