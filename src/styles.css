@@ -1,9 +1,9 @@
 /*
  * SimpleExplorer styles
  *
- * Three direction skins (a-, b-, c-) toggled by [data-direction] on <html>.
+ * Two direction skins (a-, b-) toggled by [data-direction] on <html>.
  * Light/dark per direction via [data-theme] on <html>. Color palettes mirror
- * the design bundle (explorer-fluent.jsx, explorer-cmd.jsx, explorer-workspace.jsx).
+ * the design bundle (explorer-fluent.jsx, explorer-cmd.jsx).
  */
 
 * { box-sizing: border-box; }
@@ -393,140 +393,6 @@ kbd {
   font-size: 11px; color: var(--text-dim);
 }
 .b-pane__foot span { color: var(--text-dim); }
-
-/*
- * ============================================================
- *  Direction C — Workspaces
- *  Source: explorer-workspace.jsx:10-21
- * ============================================================
- */
-[data-direction="workspace"][data-theme="light"] {
-  --bg:        #f5f4ef;
-  --chrome:    #f5f4ef;
-  --surface:   #ffffff;
-  --surface2:  #fbfaf6;
-  --border:    #e8e6e0;
-  --border-soft: #eeece6;
-  --text:      #15171b;
-  --text-mute: #5c6068;
-  --text-dim:  #9a9e9a;
-  --accent:    #3b82f6;
-  --accent-bg: rgba(59,130,246,.08);
-  --hover:     rgba(0,0,0,.03);
-}
-[data-direction="workspace"][data-theme="dark"] {
-  --bg:        #0b0d12;
-  --chrome:    #0b0d12;
-  --surface:   #13161e;
-  --surface2:  #0e1018;
-  --border:    #22262f;
-  --border-soft: #1a1d25;
-  --text:      #eaeaea;
-  --text-mute: #9ea3ad;
-  --text-dim:  #5b6068;
-  --accent:    #3b82f6;
-  --accent-bg: rgba(59,130,246,.18);
-  --hover:     rgba(255,255,255,.04);
-}
-
-[data-direction="workspace"] body { font-family: "IBM Plex Sans", "Inter", system-ui, sans-serif; }
-.c-app { display: flex; flex-direction: column; width: 100%; height: 100%; background: var(--bg); color: var(--text); }
-.c-topbar {
-  display: flex; align-items: center; gap: 4px;
-  height: 44px; padding: 0 12px;
-  border-bottom: 1px solid var(--border); background: var(--chrome);
-}
-.c-brand { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text); margin-right: 16px; }
-.c-brand__logo { width: 16px; height: 16px; background: linear-gradient(135deg, #22c55e, #3b82f6); border-radius: 4px; }
-.c-tabs { display: flex; gap: 2px; align-items: center; flex: 1; }
-.c-tab {
-  display: flex; align-items: center; gap: 8px;
-  height: 30px; padding: 0 12px; border-radius: 8px;
-  background: transparent; border: 1px solid transparent;
-  color: var(--text-mute); cursor: pointer;
-  font-size: 12.5px; font-weight: 500;
-}
-.c-tab.on { background: var(--surface); border-color: var(--border); color: var(--text); font-weight: 600; }
-.c-tab small {
-  font-size: 10px; color: var(--text-dim);
-  background: var(--surface2); padding: 1px 5px; border-radius: 4px;
-  border: 1px solid var(--border-soft);
-}
-.c-tab__plus {
-  width: 26px; height: 26px; border-radius: 6px; border: none; cursor: pointer;
-  background: transparent; color: var(--text-mute);
-  display: inline-flex; align-items: center; justify-content: center;
-}
-
-.c-body { flex: 1; display: flex; min-height: 0; }
-.c-sidebar {
-  width: 200px; background: var(--surface2);
-  border-right: 1px solid var(--border); padding: 12px 0;
-  overflow: auto;
-}
-.c-sec { margin-bottom: 14px; }
-.c-sec__title {
-  padding: 4px 14px 6px; font-size: 10.5px; font-weight: 600;
-  color: var(--text-dim); text-transform: uppercase; letter-spacing: .6px;
-}
-.c-sec__item {
-  display: flex; align-items: center; gap: 10px;
-  padding: 5px 14px; cursor: pointer; font-size: 12px; color: var(--text);
-}
-.c-sec__item:hover { background: var(--hover); }
-.c-sec__item .icn { color: var(--text-mute); }
-.c-sec__lbl { flex: 1; overflow: hidden; }
-.c-sec__lbl div:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.c-sec__sub { font-size: 10px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.c-sec__item small { font-size: 10px; color: var(--text-dim); }
-
-.c-grid { flex: 1; display: grid; gap: 10px; padding: 12px; min-height: 0; }
-.c-pane {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px; overflow: hidden;
-  display: flex; flex-direction: column; min-height: 0;
-}
-.c-pane--active {
-  border-color: var(--accent, #3b82f6);
-  box-shadow: 0 0 0 1px var(--accent, #3b82f6);
-}
-.c-pane__head {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-soft);
-  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent 60%);
-}
-.c-pane__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
-.c-pane__lbl { font-size: 12px; font-weight: 600; color: var(--text); }
-.c-pane__sep { font-size: 11px; color: var(--text-dim); }
-.c-pane__path { font-size: 11px; color: var(--text-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.c-pane__crumb {
-  display: flex; align-items: center; gap: 4px;
-  padding: 6px 12px; border-bottom: 1px solid var(--border-soft);
-  background: var(--surface2);
-  font-size: 11px; color: var(--text-mute);
-}
-.c-pane__crumb .crumbs__sep { color: var(--text-dim); }
-.c-pane__crumb .crumbs__seg--last { color: var(--text); font-weight: 600; }
-
-.c-dock {
-  height: 38px; border-top: 1px solid var(--border);
-  background: var(--surface2);
-  display: flex; align-items: center; gap: 4px;
-  padding: 0 12px;
-}
-.c-sep { width: 1px; height: 18px; background: var(--border); margin: 0 6px; }
-.c-dock__btn {
-  display: inline-flex; align-items: center; gap: 7px;
-  height: 26px; padding: 0 10px; border-radius: 6px;
-  background: transparent; border: 1px solid transparent;
-  color: var(--text-mute); cursor: pointer; font-size: 12px;
-}
-.c-dock__btn:hover { background: var(--hover); color: var(--text); }
-.c-dock__btn--hi { border-color: var(--border); color: var(--text); }
-.c-dock__status { font-size: 11px; color: var(--text-dim); }
 
 /* ── Right-click context menu (shared across all directions) ─────────── */
 .ctx-menu {

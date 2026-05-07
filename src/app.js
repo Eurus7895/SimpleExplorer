@@ -6,7 +6,6 @@ import * as fs from './fs.js';
 import { createPaneState, navigate, goBack, goForward, goUp } from './pane.js';
 import { renderFluent } from './directions/fluent.js';
 import { renderCmd } from './directions/cmd.js';
-import { renderWorkspace } from './directions/workspace.js';
 
 // Boot the Neutralino client. Safe to call before DOM ready; APIs queue until
 // the runtime handshake completes. No-op when running directly in a browser
@@ -25,13 +24,11 @@ const DEFAULT = {
   direction: 'fluent',
   themeA: 'light', layoutA: '2v',
   themeB: 'light', layoutB: '2v',
-  themeC: 'dark',  layoutC: '3',
 };
 
 const RENDERERS = {
-  fluent:    { fn: renderFluent,    themeKey: 'themeA', layoutKey: 'layoutA' },
-  cmd:       { fn: renderCmd,       themeKey: 'themeB', layoutKey: 'layoutB' },
-  workspace: { fn: renderWorkspace, themeKey: 'themeC', layoutKey: 'layoutC' },
+  fluent: { fn: renderFluent, themeKey: 'themeA', layoutKey: 'layoutA' },
+  cmd:    { fn: renderCmd,    themeKey: 'themeB', layoutKey: 'layoutB' },
 };
 
 const LAYOUTS = {
@@ -315,16 +312,17 @@ function typeJump(prefix) {
   // After re-render, find the matching row in the active pane and scroll
   // it into view. CSS.escape handles names with quotes / backslashes.
   const sel = `.row[data-name="${CSS.escape(found.name)}"]`;
-  const row = document.querySelector(
-    `.a-pane--active ${sel}, .b-pane--active ${sel}, .c-pane--active ${sel}`
-  );
+  const row = document.querySelector(`.a-pane--active ${sel}, .b-pane--active ${sel}`);
   row?.scrollIntoView({ block: 'nearest' });
 }
 
 function loadSettings() {
   try {
     const raw = JSON.parse(localStorage.getItem(STATE_KEY) || '{}');
-    return { ...DEFAULT, ...raw };
+    const merged = { ...DEFAULT, ...raw };
+    // Migrate users who had the now-removed Workspace direction selected.
+    if (!RENDERERS[merged.direction]) merged.direction = 'fluent';
+    return merged;
   } catch {
     return { ...DEFAULT };
   }

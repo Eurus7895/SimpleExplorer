@@ -53,8 +53,7 @@ src/                      frontend, no build step
   ├── styles.css          all CSS; per-direction themed via [data-direction] / [data-theme]
   └── directions/
         ├── fluent.js     A · Fluent Refined (Win11 Mica chrome)
-        ├── cmd.js        B · Command-bar first (Linear/Arc inspired)
-        └── workspace.js  C · Workspaces (saved pane sets, tinted accents)
+        └── cmd.js        B · Command-bar first (Linear/Arc inspired)
 docs/
   └── design.md           this file (single source of truth per CLAUDE.md)
 ```
@@ -119,7 +118,6 @@ than inventing new values:
 - `explorer-shared.jsx` — colors, icon set, sample paths
 - `explorer-fluent.jsx` — Direction A spec (palette near the top)
 - `explorer-cmd.jsx` — Direction B spec
-- `explorer-workspace.jsx` — Direction C spec
 
 When tweaking visuals, port from those files.
 

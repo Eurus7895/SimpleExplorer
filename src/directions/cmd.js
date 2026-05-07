@@ -137,9 +137,8 @@ function layoutPicker(ctx) {
 
 function directionSwitcher(ctx) {
   const opts = [
-    { id: 'fluent',    label: 'Fluent' },
-    { id: 'cmd',       label: 'Cmd' },
-    { id: 'workspace', label: 'Workspaces' },
+    { id: 'fluent', label: 'Fluent' },
+    { id: 'cmd',    label: 'Cmd' },
   ];
   return `<div class="dir-switch">${opts.map((o) => `
     <button data-dir="${o.id}" class="${ctx.direction === o.id ? 'on' : ''}">${o.label}</button>

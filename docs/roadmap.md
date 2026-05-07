@@ -7,15 +7,16 @@ in [`../CLAUDE.md`](../CLAUDE.md). This file is the source of truth for
 
 Status as of the last commit on `claude/review-roadmap-MKEpx`:
 post-MVP, pre-v1. Phase 1 (chrome wiring) and Phase 1.5 (full Windows
-shell context menu) have shipped; the remaining gap is multi-tabs,
-workspace switching, the Ctrl+K palette, and sort/view menus.
+shell context menu) have shipped. The Workspace direction has been
+removed (one less skin to maintain); the remaining directions are
+Fluent (A) and Cmd (B). The remaining gap is multi-tabs, the Ctrl+K
+palette, and sort/view menus.
 
 ## Shipped
 
 - **Phase 1 — chrome wiring** (commit `0b7242e`). Fluent window
-  controls, clickable breadcrumbs in all three directions, Direction B
-  rail navigation, Direction C Pinned, dynamic drives section in both
-  Fluent and Workspace sidebars (real free-space numbers from
+  controls, clickable breadcrumbs, Direction B rail navigation, dynamic
+  drives section in the Fluent sidebar (real free-space numbers from
   `fs.listDrives()`).
 - **Phase 1.5 — full Windows shell context menu**. Two new helper
   verbs in `tools/shellhelp.cpp` (`menu` walks `IContextMenu` →
@@ -46,20 +47,22 @@ workspace switching, the Ctrl+K palette, and sort/view menus.
 
 ### Wired (works)
 
-- Direction switcher (A · Fluent / B · Cmd / C · Workspaces)
+- Direction switcher (A · Fluent / B · Cmd)
 - Theme toggle (light ↔ dark, per direction)
 - Layout picker (1, 2v, 2h, 3, 4 panes)
 - Back / Forward / Up navigation per pane
 - Search input (filters visible rows in the active pane)
+- Type-to-jump in the active pane (Windows Explorer style)
 - Row click (select), double-click (open), right-click (custom menu)
 - Pane click sets active pane
+- Clickable breadcrumb segments
+- Fluent window controls: minimize and close (maximize uses the OS title bar)
 - Right-click actions: Open, Open in VS Code, Open in Terminal,
   Copy path, Rename, Delete, Show in Explorer, Properties
 - Fluent command bar buttons: New folder · Copy · Rename · Delete · Compare
-- Workspace bottom dock: same set + "Copy → other pane" / "Compare panes"
-  shown when ≥ 2 panes
-- Fluent sidebar full quick-access list — click navigates active pane
-- Recent items in Fluent + Workspace sidebars — click navigates
+- Fluent sidebar quick-access + dynamic drives — click navigates active pane
+- Recent items in Fluent sidebar — click navigates
+- Direction B rail navigation (Home / Downloads / Docs)
 - Real Windows Properties dialog (via `extras/shellhelp.exe` when built;
   PowerShell fallback otherwise)
 - Recycle Bin via `IFileOperation` (helper) or
@@ -71,17 +74,11 @@ These render and look right, but clicking them does nothing today:
 
 | Where | Element | Should do |
 | --- | --- | --- |
-| All directions | Window controls `─ ☐ ✕` | minimize / maximize / exit via `Neutralino.window.*` |
-| All directions | Breadcrumb segments | click → navigate to that segment |
 | Fluent pane chrome | Tab `×` close, tab `+` add | implement multi-tabs per pane |
-| Direction B | Rail icons (Home / Pinned / Recent / Downloads / Docs / Drives) | click → navigate / open panel |
+| Direction B | Rail icons (Pinned / Recent / Drives) | open popover panels |
 | Direction B | Pane header View / Sort / More | sort dropdown, view-mode menu |
 | Direction B | Ctrl+K command palette | open palette overlay, route input to commands / path nav / fuzzy file search |
-| Direction C | Workspace tabs (Qt project / Triage / Compare runs / Research) | click → switch to that workspace's pane set |
-| Direction C | Workspace `+` button | "save current panes as workspace" |
-| Direction C | Sidebar Pinned items | click → navigate |
-| Direction C | Sidebar Drives (hardcoded "146 GB" / "892 GB") | populate from `fs.listDrives()` |
-| Direction C | Pane head "more" button, search icon | menu / search-in-pane |
+| Direction B | Pane chip (path) segments | click → navigate to that segment (currently one chip, not per-segment) |
 
 ### Not started — explicitly out of MVP scope
 
@@ -317,15 +314,6 @@ in `localStorage` alongside existing pane state.
 
 Touches: `pane.js` (state shape), `app.js` (new actions: `tabNew`,
 `tabClose`, `tabSwitch`), `directions/fluent.js` (real tab bar).
-
-### Phase 3 — Workspace switching for Direction C (~half day)
-
-Workspaces today are decorative tabs. Make them real saved pane sets:
-
-- "Save current pane layout as workspace …" via the `+` button.
-- Click a workspace tab → swap the entire pane grid.
-- Persist via `localStorage` under `simple-explorer.workspaces`.
-- Default seeded set on first run matches the current decorative tabs.
 
 ### Phase 4 — Direction B command palette (~half day)
 
