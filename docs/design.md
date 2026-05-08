@@ -130,10 +130,16 @@ When tweaking visuals, port from those files.
   `var(--bg)`, `var(--text)`, `var(--accent)`, etc. — never hard-code colors.
 - **One module per direction.** Chrome differences live in
   `src/directions/<name>.js`. Shared row/pane logic lives in `src/pane.js`.
+  A pane owns a list of tabs; the active tab's fields (`path`,
+  `history`, `selected`, `entries`, `filter`) are mirrored on the
+  pane object so existing call sites read them directly without
+  threading a tab argument.
 - **All FS calls go through `src/fs.js`.** Don't call `Neutralino.*` directly
   from UI code — that adapter handles the Neutralino/mock split.
 - **Settings persist via `localStorage`** under the `simple-explorer.*` keys.
-  No state library.
+  No state library. Tab state (per-pane `tabs[].path` + `activeTabIdx`) lives
+  under `simple-explorer.tabs`; non-active tabs lazy-list their entries on
+  first switch.
 - **Right-click actions** dispatch a `CustomEvent('explorer:action', { detail })`
   on `document`; `app.js` routes them through `doAction()`. Add new menu
   items to the array in `pane.js` `showContextMenu()` and a `case` in

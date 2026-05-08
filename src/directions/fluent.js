@@ -140,14 +140,7 @@ function paneCard(ctx, pane, i) {
   const card = el('div', 'a-pane' + (i === ctx.activePane ? ' a-pane--active' : ''));
   card.addEventListener('click', () => ctx.setActivePane(i));
 
-  const tabbar = el('div', 'a-tabs');
-  const tab = el('div', 'a-tab a-tab--active');
-  tab.innerHTML = `${iconHTML('folder', 13)}<span>${shortPath(pane.path).split(/[\\/]/).pop() || 'home'}</span>${iconHTML('close', 11)}`;
-  tabbar.appendChild(tab);
-  const plus = el('button', 'a-tab__plus');
-  plus.innerHTML = iconHTML('plus', 12);
-  tabbar.appendChild(plus);
-  card.appendChild(tabbar);
+  card.appendChild(tabBar(ctx, pane, i));
 
   const crumbBar = el('div', 'a-crumbbar');
   crumbBar.appendChild(renderBreadcrumb(pane.path, (p) => ctx.onPaneNav(i, p)));
@@ -161,6 +154,41 @@ function paneCard(ctx, pane, i) {
   });
   card.appendChild(rows);
   return card;
+}
+
+function tabBar(ctx, pane, paneIdx) {
+  const bar = el('div', 'a-tabs');
+  pane.tabs.forEach((tab, tabIdx) => {
+    const tabEl = el('div', 'a-tab' + (tabIdx === pane.activeTabIdx ? ' a-tab--active' : ''));
+    const label = tab.path.split(/[\\/]/).filter(Boolean).pop() || 'home';
+    tabEl.innerHTML = `${iconHTML('folder', 13)}<span class="a-tab__label" title="${tab.path}">${label}</span>`;
+    tabEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      ctx.setActivePane(paneIdx);
+      if (tabIdx !== pane.activeTabIdx) ctx.onTabSwitch(paneIdx, tabIdx);
+    });
+    if (pane.tabs.length > 1) {
+      const close = el('span', 'a-tab__close');
+      close.innerHTML = iconHTML('close', 11);
+      close.title = 'Close tab';
+      close.addEventListener('click', (e) => {
+        e.stopPropagation();
+        ctx.onTabClose(paneIdx, tabIdx);
+      });
+      tabEl.appendChild(close);
+    }
+    bar.appendChild(tabEl);
+  });
+  const plus = el('button', 'a-tab__plus');
+  plus.innerHTML = iconHTML('plus', 12);
+  plus.title = 'New tab';
+  plus.addEventListener('click', (e) => {
+    e.stopPropagation();
+    ctx.setActivePane(paneIdx);
+    ctx.onTabNew(paneIdx);
+  });
+  bar.appendChild(plus);
+  return bar;
 }
 
 function pane3rdAware(ctx, i, card) {

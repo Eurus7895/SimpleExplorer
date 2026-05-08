@@ -6,11 +6,11 @@ in [`../CLAUDE.md`](../CLAUDE.md). This file is the source of truth for
 **what's painted but not wired**, and **what hasn't been started**.
 
 Status as of the last commit on `claude/review-roadmap-MKEpx`:
-post-MVP, pre-v1. Phase 1 (chrome wiring) and Phase 1.5 (full Windows
-shell context menu) have shipped. The Workspace direction has been
-removed (one less skin to maintain); the remaining directions are
-Fluent (A) and Cmd (B). The remaining gap is multi-tabs, the Ctrl+K
-palette, and sort/view menus.
+post-MVP, pre-v1. Phase 1 (chrome wiring), Phase 1.5 (full Windows
+shell context menu), and Phase 2 (real multi-tabs per pane) have
+shipped. The Workspace direction has been removed (one less skin to
+maintain); the remaining directions are Fluent (A) and Cmd (B). The
+remaining gap is the Ctrl+K palette and sort/view menus.
 
 ## Shipped
 
@@ -18,6 +18,14 @@ palette, and sort/view menus.
   controls, clickable breadcrumbs, Direction B rail navigation, dynamic
   drives section in the Fluent sidebar (real free-space numbers from
   `fs.listDrives()`).
+- **Phase 2 — real multi-tabs per pane**. Each Fluent pane now owns a
+  tab list (`pane.tabs`); each tab has its own path, history,
+  selection, entries, and filter. `+` opens a new tab at the active
+  tab's path; `×` closes a tab (hidden when only one tab remains —
+  closing the last tab is a no-op, layout-driven pane removal stays
+  in Phase 6). State persists under `simple-explorer.tabs` and is
+  rehydrated on launch; non-active tabs lazy-list their entries on
+  first switch.
 - **Phase 1.5 — full Windows shell context menu**. Two new helper
   verbs in `tools/shellhelp.cpp` (`menu` walks `IContextMenu` →
   emits a JSON tree; `invoke` calls `InvokeCommand` for the chosen
@@ -74,11 +82,9 @@ These render and look right, but clicking them does nothing today:
 
 | Where | Element | Should do |
 | --- | --- | --- |
-| Fluent pane chrome | Tab `×` close, tab `+` add | implement multi-tabs per pane |
 | Direction B | Rail icons (Pinned / Recent / Drives) | open popover panels |
 | Direction B | Pane header View / Sort / More | sort dropdown, view-mode menu |
 | Direction B | Ctrl+K command palette | open palette overlay, route input to commands / path nav / fuzzy file search |
-| Direction B | Pane chip (path) segments | click → navigate to that segment (currently one chip, not per-segment) |
 
 ### Not started — explicitly out of MVP scope
 
@@ -305,15 +311,47 @@ MSVC. Until then, drive list / properties / delete fall back to
 PowerShell (~250–400 ms) and the new shell context menu silently
 degrades to the curated-only list.
 
-### Phase 2 — Real multi-tabs per pane (~half day)
+### Phase 3 — Folder background right-click + resizable panes (~half day each)
 
-Tabs in Fluent's pane chrome currently render a single static label. Make
-them real: state per tab (path, history, selection), `+` opens a new tab
-in the pane, `×` closes the tab (close last → close pane). Persist tabs
-in `localStorage` alongside existing pane state.
+**3a · Empty-space context menu.** Right-clicking the blank area of a
+pane (below the last row, or anywhere when the folder is empty) does
+nothing today. Wire a `contextmenu` listener on `.rows` that fires
+only when the target is the container itself / `.rows__empty`, and
+open a folder-scope menu via a new `showFolderContextMenu(x, y, pane)`
+in `pane.js`. Curated items: Open in VS Code · Open in Terminal ·
+New folder · Refresh · Show in Explorer · Properties. Below those,
+async-fill `helperMenu([pane.path])` so the OS shell extensions
+(Git Bash, 7-Zip, TortoiseSVN, Send to, …) appear for the folder
+itself. Touches: `pane.js` (new menu helper), `app.js` (`refresh`
+action; extend `reveal` to fall back to `openInOS(pane.path)` when
+nothing is selected).
 
-Touches: `pane.js` (state shape), `app.js` (new actions: `tabNew`,
-`tabClose`, `tabSwitch`), `directions/fluent.js` (real tab bar).
+**3b · Resizable panes.** Layouts (`2v`, `2h`, `3`, `4`) currently use
+a fixed 1fr 1fr grid with no gutter. Add a new `src/layout.js`
+exporting `LAYOUT_DEFS` + `applyLayout(grid, layoutId, splits, paneCards, onChange)`
+that sets `gridTemplateColumns/Rows` with a 6 px gutter track,
+places each card by explicit `grid-column / grid-row`, and inserts
+`splitter--col` / `splitter--row` divs in the gutter tracks. Drag
+clamps the ratio to 0.1 – 0.9, calls `onChange`, which persists +
+re-renders. Per-layout split ratios live in
+`simple-explorer.splits` (one shared map keyed by layout id;
+defaults 0.5). Splitters per layout: `1` none · `2v` 1 vertical ·
+`2h` 1 horizontal · `3` vertical (top row) + horizontal (between
+top row and full-width bottom) · `4` 1 vertical + 1 horizontal
+spanning both axes. `pane3rdAware` (third-pane full-width) folds
+into `applyLayout`. Both directions swap their `grid.style.gridTemplate*`
++ `appendChild` lines for one `applyLayout(...)` call.
+
+### ~~Phase 2 — Real multi-tabs per pane~~ (shipped)
+
+Each Fluent pane carries a `tabs` array (path / history / selection /
+entries / filter per tab); active-tab fields are mirrored on the pane
+object so existing nav/render code is unchanged. `pane.js` exports
+`tabNew` / `tabClose` / `tabSwitch` / `tabSnapshot`; `app.js`
+persists `panes[].tabs[].path` + `activeTabIdx` under
+`simple-explorer.tabs`; `directions/fluent.js` renders the real tab
+bar. Closing the last tab is a no-op (the × is hidden) — coupling
+tab close to layout shrink stays in Phase 6.
 
 ### Phase 4 — Direction B command palette (~half day)
 
