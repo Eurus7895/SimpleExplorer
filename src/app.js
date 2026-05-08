@@ -167,6 +167,17 @@ function render() {
     onTabSwitch: async (i, tabIdx) => { await tabSwitch(panes[i], tabIdx); saveTabs(); render(); },
     onSortChange: (i, sort) => { panes[i].sort = sort; saveTabs(); render(); },
     onViewChange: (i, view) => { panes[i].view = view; saveTabs(); render(); },
+    onRename: async (i, oldName, newName) => {
+      const p = panes[i];
+      p.renaming = null;
+      if (newName && newName !== oldName) {
+        try {
+          await fs.rename(fs.joinPath(p.path, oldName), fs.joinPath(p.path, newName));
+        } catch (e) { console.warn('rename failed:', e); }
+        await safeLoad(p);
+      }
+      render();
+    },
     onAction: (action) => doAction(action),
     rerender: render,
   };
@@ -198,10 +209,9 @@ async function doAction(action) {
     case 'rename': {
       const sel = [...pane.selected][0];
       if (!sel) return;
-      const next = prompt('Rename to:', sel);
-      if (!next || next === sel) return;
-      await fs.rename(fs.joinPath(pane.path, sel), fs.joinPath(pane.path, next));
-      await safeLoad(pane);
+      // Trigger inline edit on the row; the actual fs.rename happens via
+      // ctx.onRename callback wired into renderRows below.
+      pane.renaming = sel;
       render();
       break;
     }

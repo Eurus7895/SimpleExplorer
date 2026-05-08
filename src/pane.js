@@ -172,7 +172,7 @@ export function getRecent() {
 // ── Renderers ──────────────────────────────────────────────────────────
 
 export function renderRows(state, opts = {}) {
-  const { onActivate, onPaneActivate, density = 'normal', accent } = opts;
+  const { onActivate, onPaneActivate, onRename, density = 'normal', accent } = opts;
   const items = filtered(state);
   const list = document.createElement('div');
   list.className = 'rows';
@@ -193,7 +193,37 @@ export function renderRows(state, opts = {}) {
 
     const nameCell = document.createElement('span');
     nameCell.className = 'row__name';
-    nameCell.innerHTML = `${iconHTML(kindFor(it))}<span class="row__label">${escapeHtml(it.name)}</span>`;
+    if (state.renaming === it.name) {
+      const label = document.createElement('input');
+      label.className = 'row__rename';
+      label.value = it.name;
+      // Pre-select the basename so the user can replace it without
+      // touching the extension.
+      const dot = it.is_dir ? -1 : it.name.lastIndexOf('.');
+      label.addEventListener('focus', () => {
+        const end = dot > 0 ? dot : it.name.length;
+        label.setSelectionRange(0, end);
+      });
+      const commit = () => {
+        const next = label.value.trim();
+        if (!next || next === it.name) onRename?.(it.name, null);
+        else onRename?.(it.name, next);
+      };
+      label.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        else if (e.key === 'Escape') { e.preventDefault(); onRename?.(it.name, null); }
+      });
+      label.addEventListener('click', (e) => e.stopPropagation());
+      label.addEventListener('blur', commit);
+      // Auto-focus once the row is in the DOM. Using requestAnimationFrame
+      // to avoid the focus being eaten by the parent click that triggered F2.
+      requestAnimationFrame(() => label.focus());
+      nameCell.innerHTML = iconHTML(kindFor(it));
+      nameCell.appendChild(label);
+    } else {
+      nameCell.innerHTML = `${iconHTML(kindFor(it))}<span class="row__label">${escapeHtml(it.name)}</span>`;
+    }
 
     const sizeCell = document.createElement('span');
     sizeCell.className = 'row__size';

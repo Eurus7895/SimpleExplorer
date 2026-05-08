@@ -157,6 +157,7 @@ function paneCard(ctx, pane, i) {
   const rows = renderRows(pane, {
     onActivate: (entry) => ctx.onActivateEntry(i, entry),
     onPaneActivate: () => ctx.setActivePane(i),
+    onRename: (oldName, newName) => ctx.onRename(i, oldName, newName),
   });
   card.appendChild(rows);
   return card;

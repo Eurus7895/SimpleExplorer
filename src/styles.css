@@ -112,6 +112,16 @@ kbd {
   padding: 24px; color: var(--text-dim); font-size: 12px; text-align: center;
 }
 
+/* F2 inline rename — input lives inside .row__name and matches the label
+   line height so the row doesn't reflow. */
+.row__rename {
+  flex: 1;
+  height: 22px; padding: 0 4px;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--accent); border-radius: 3px;
+  font: inherit; outline: none;
+}
+
 /* ── Crumbs ────────────────────────────────────────────────────── */
 .crumbs {
   display: flex; align-items: center; gap: 6px;

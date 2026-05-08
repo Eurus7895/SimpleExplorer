@@ -117,6 +117,7 @@ function paneCard(ctx, pane, i) {
     density: 'cmd',
     onActivate: (entry) => ctx.onActivateEntry(i, entry),
     onPaneActivate: () => ctx.setActivePane(i),
+    onRename: (oldName, newName) => ctx.onRename(i, oldName, newName),
   });
   card.appendChild(rows);
 
