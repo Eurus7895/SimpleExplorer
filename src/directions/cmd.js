@@ -3,7 +3,7 @@
 // header. Visuals trace explorer-cmd.jsx in the design bundle.
 
 import { iconHTML } from '../icons.js';
-import { renderRows, buildSegPath } from '../pane.js';
+import { renderRows, buildSegPath, selectionSizeLabel } from '../pane.js';
 import { RAIL_ITEMS } from '../sidebar-data.js';
 import { applyLayout } from '../layout.js';
 import { openPalette, closePalette, isPaletteOpen } from '../palette.js';
@@ -122,9 +122,11 @@ function paneCard(ctx, pane, i) {
 
   const foot = el('div', 'b-pane__foot');
   const sel = [...pane.selected];
+  const sizeLabel = selectionSizeLabel(pane);
   foot.innerHTML = `
     <span>${pane.entries.length} items</span>
     ${sel.length ? `<span>· ${sel[0]}${sel.length > 1 ? ` +${sel.length - 1}` : ''} selected</span>` : ''}
+    ${sizeLabel ? `<span>· ${sizeLabel}</span>` : ''}
   `;
   card.appendChild(foot);
   return card;

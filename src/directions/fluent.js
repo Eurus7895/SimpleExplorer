@@ -4,7 +4,7 @@
 // Visuals trace explorer-fluent.jsx in the design bundle.
 
 import { iconHTML } from '../icons.js';
-import { renderRows, renderColumnHeader, renderBreadcrumb, getRecent } from '../pane.js';
+import { renderRows, renderColumnHeader, renderBreadcrumb, getRecent, selectionSizeLabel } from '../pane.js';
 import { SIDEBAR_FULL } from '../sidebar-data.js';
 import { applyLayout } from '../layout.js';
 
@@ -208,8 +208,9 @@ function tabBar(ctx, pane, paneIdx) {
 function statusBar(ctx) {
   const pane = ctx.panes[ctx.activePane];
   const bar = el('div', 'a-statusbar');
+  const sizeLabel = selectionSizeLabel(pane);
   bar.innerHTML = `
-    <span>Pane ${ctx.activePane + 1} · ${pane.entries.length} items · ${pane.selected.size} selected</span>
+    <span>Pane ${ctx.activePane + 1} · ${pane.entries.length} items · ${pane.selected.size} selected${sizeLabel ? ` · ${sizeLabel}` : ''}</span>
     <div class="spacer"></div>
     <span>${pane.path}</span>
   `;

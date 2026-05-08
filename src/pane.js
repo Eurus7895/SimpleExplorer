@@ -269,6 +269,25 @@ export function renderRows(state, opts = {}) {
   return list;
 }
 
+// Sums byte counts for selected files in a pane. Returns '' for empty
+// selection or when only folders are selected; suffixes "(files only)"
+// when a folder is selected alongside files (folder size needs a
+// recursive walk we don't do).
+export function selectionSizeLabel(pane) {
+  if (!pane.selected.size) return '';
+  let bytes = 0;
+  let hasFolder = false;
+  let hasFile = false;
+  for (const name of pane.selected) {
+    const e = pane.entries.find((x) => x.name === name);
+    if (!e) continue;
+    if (e.is_dir) hasFolder = true;
+    else { hasFile = true; bytes += e.size || 0; }
+  }
+  if (!hasFile) return '';
+  return hasFolder ? `${fs.formatSize(bytes)} (files only)` : fs.formatSize(bytes);
+}
+
 export function filtered(state) {
   const sorted = sortedEntries(state);
   if (!state.filter) return sorted;
