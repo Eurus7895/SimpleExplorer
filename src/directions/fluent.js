@@ -78,9 +78,9 @@ function commandBar(ctx) {
       <input data-palette class="palette-input" placeholder="Go to folder, search, or run a command" />
       <kbd>Ctrl K</kbd>
     </div>
-    ${viewPicker(ctx)}
-    <span class="a-sep"></span>
     ${layoutPicker(ctx)}
+    <span class="a-sep"></span>
+    ${viewPicker(ctx)}
   `;
   bindClicks(bar, ctx);
   bindNav(bar, ctx);
@@ -257,9 +257,9 @@ function bindNav(scope, ctx) {
 }
 
 const VIEW_OPTS = [
-  { id: 'details', icn: 'list',     title: 'Details' },
-  { id: 'compact', icn: 'sidebar',  title: 'Compact' },
-  { id: 'tiles',   icn: 'grid4',    title: 'Tiles' },
+  { id: 'details', icn: 'view-details', title: 'Details' },
+  { id: 'compact', icn: 'view-compact', title: 'Compact' },
+  { id: 'tiles',   icn: 'view-tiles',   title: 'Tiles' },
 ];
 
 function viewPicker(ctx) {
