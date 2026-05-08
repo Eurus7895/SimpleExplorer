@@ -466,12 +466,13 @@ body.is-resizing-col .row, body.is-resizing-row .row { pointer-events: none; }
   overflow: hidden;
 }
 .palette__mode {
-  position: absolute; top: -10px; left: 12px;
-  height: 18px; padding: 0 8px;
+  align-self: flex-start;
+  margin: 6px 0 2px 8px;
+  height: 16px; padding: 0 7px;
   display: inline-flex; align-items: center;
   background: var(--accent-bg); color: var(--accent);
-  border: 1px solid var(--accent); border-radius: 9px;
-  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px;
+  border: 1px solid var(--accent); border-radius: 8px;
+  font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px;
 }
 .palette__list { flex: 1; overflow: auto; padding: 6px; min-height: 0; }
 .palette__row {
