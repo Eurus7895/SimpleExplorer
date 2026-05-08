@@ -28,6 +28,7 @@ const DEFAULT = {
   themeA: 'light', layoutA: '2v',
   themeB: 'light', layoutB: '2v',
   splits: { ...DEFAULT_SPLITS },
+  cmdRailOpen: 'recent',
 };
 
 const RENDERERS = {
@@ -167,6 +168,19 @@ function render() {
     onTabSwitch: async (i, tabIdx) => { await tabSwitch(panes[i], tabIdx); saveTabs(); render(); },
     onSortChange: (i, sort) => { panes[i].sort = sort; saveTabs(); render(); },
     onViewChange: (i, view) => { panes[i].view = view; saveTabs(); render(); },
+    cmdRailOpen: settings.cmdRailOpen ?? null,
+    onCmdRailToggle: (id) => { settings.cmdRailOpen = id; saveSettings(); render(); },
+    onRename: async (i, oldName, newName) => {
+      const p = panes[i];
+      p.renaming = null;
+      if (newName && newName !== oldName) {
+        try {
+          await fs.rename(fs.joinPath(p.path, oldName), fs.joinPath(p.path, newName));
+        } catch (e) { console.warn('rename failed:', e); }
+        await safeLoad(p);
+      }
+      render();
+    },
     onAction: (action) => doAction(action),
     rerender: render,
   };
@@ -198,10 +212,9 @@ async function doAction(action) {
     case 'rename': {
       const sel = [...pane.selected][0];
       if (!sel) return;
-      const next = prompt('Rename to:', sel);
-      if (!next || next === sel) return;
-      await fs.rename(fs.joinPath(pane.path, sel), fs.joinPath(pane.path, next));
-      await safeLoad(pane);
+      // Trigger inline edit on the row; the actual fs.rename happens via
+      // ctx.onRename callback wired into renderRows below.
+      pane.renaming = sel;
       render();
       break;
     }
@@ -318,23 +331,38 @@ async function doAction(action) {
 function bindGlobalKeys() {
   document.addEventListener('explorer:action', (e) => doAction(e.detail));
   document.addEventListener('keydown', (e) => {
-    // Global Ctrl+K opens the palette in any direction.
-    // Cmd reuses its existing search input (already wired in cmd.js);
-    // Fluent gets a standalone overlay with an embedded input.
+    // Both directions now anchor the palette to a visible input
+    // (`.palette-input`) embedded in their chrome. Ctrl+K focuses it;
+    // Ctrl+L focuses it pre-filled with the active pane's path. The
+    // standalone overlay path is kept as a fallback for environments
+    // where the input isn't in the DOM.
     if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
-      if (settings.direction === 'cmd') {
-        const input = document.querySelector('input.cmd-palette-input');
-        if (input) {
-          e.preventDefault();
-          input.focus();
-          input.select();
-        }
-      } else if (settings.direction === 'fluent') {
-        if (isPaletteOpen()) return;
+      const input = document.querySelector('input.palette-input');
+      if (input) {
         e.preventDefault();
+        input.focus();
+        input.select();
+      } else if (!isPaletteOpen()) {
+        e.preventDefault();
+        openPalette({ ctx: paletteCtx, getPane: () => panes[activePane] });
+      }
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L')) {
+      const pane = panes[activePane];
+      if (!pane) return;
+      e.preventDefault();
+      const input = document.querySelector('input.palette-input');
+      if (input) {
+        input.focus();
+        input.value = pane.path;
+        input.setSelectionRange(pane.path.length, pane.path.length);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      } else {
         openPalette({
           ctx: paletteCtx,
           getPane: () => panes[activePane],
+          initialQuery: pane.path,
         });
       }
       return;
@@ -348,7 +376,12 @@ function bindGlobalKeys() {
     else if (e.key === 'Backspace') { goUp(panes[activePane]).then(render); }
     else if (e.altKey && e.key === 'ArrowLeft') { goBack(panes[activePane]).then(render); }
     else if (e.altKey && e.key === 'ArrowRight') { goForward(panes[activePane]).then(render); }
-    else if (e.key === 'Escape') { typeBuf = ''; clearTimeout(typeBufTimer); }
+    else if (e.key === 'Escape') {
+      typeBuf = '';
+      clearTimeout(typeBufTimer);
+      const pane = panes[activePane];
+      if (pane?.selected.size) { pane.selected.clear(); render(); }
+    }
     else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
       // Type-to-jump (Windows Explorer style): printable keys accumulate
       // into a prefix buffer for 750 ms; the active pane jumps to the

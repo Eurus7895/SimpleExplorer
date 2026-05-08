@@ -35,6 +35,13 @@ const SVG = {
   one:         `<rect ${STROKE} x="2" y="3" width="12" height="10" rx="1"/>`,
   tree:        `<path ${STROKE} d="M3 4h2M3 8h4M3 12h4M5 4v8"/>`,
   list:        `<path ${STROKE} d="M3 4h10M3 8h10M3 12h10"/>`,
+  // Windows-style view-mode glyphs.
+  // details: small icon block + label line on each row.
+  'view-details': `<g ${STROKE}><rect x="2.5" y="3.5" width="2" height="2"/><path d="M6 4.5h7.5"/><rect x="2.5" y="7.5" width="2" height="2"/><path d="M6 8.5h7.5"/><rect x="2.5" y="11.5" width="2" height="2"/><path d="M6 12.5h7.5"/></g>`,
+  // compact: denser horizontal lines, no icons.
+  'view-compact': `<path ${STROKE} d="M3 3.5h10M3 6h10M3 8.5h10M3 11h10M3 13.5h10"/>`,
+  // tiles: 2×2 grid of cells, each with a small icon + label line inside.
+  'view-tiles':   `<g ${STROKE}><rect x="2" y="2.5" width="5.5" height="5" rx=".5"/><rect x="3" y="3.5" width="1.5" height="1.5" fill="currentColor" stroke="none"/><path d="M3 6h3.5"/><rect x="8.5" y="2.5" width="5.5" height="5" rx=".5"/><rect x="9.5" y="3.5" width="1.5" height="1.5" fill="currentColor" stroke="none"/><path d="M9.5 6h3.5"/><rect x="2" y="9" width="5.5" height="5" rx=".5"/><rect x="3" y="10" width="1.5" height="1.5" fill="currentColor" stroke="none"/><path d="M3 12.5h3.5"/><rect x="8.5" y="9" width="5.5" height="5" rx=".5"/><rect x="9.5" y="10" width="1.5" height="1.5" fill="currentColor" stroke="none"/><path d="M9.5 12.5h3.5"/></g>`,
   columns:     `<g ${STROKE}><rect x="2" y="3" width="12" height="10" rx="1"/><path d="M6 3v10M10 3v10"/></g>`,
   star:        `<path ${STROKE} d="m8 2 1.7 4 4.3.4-3.3 2.9 1 4.2L8 11.2 4.3 13.5l1-4.2L2 6.4l4.3-.4L8 2Z"/>`,
   clock:       `<g ${STROKE}><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/></g>`,

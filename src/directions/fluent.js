@@ -4,9 +4,10 @@
 // Visuals trace explorer-fluent.jsx in the design bundle.
 
 import { iconHTML } from '../icons.js';
-import { renderRows, renderColumnHeader, renderBreadcrumb, getRecent } from '../pane.js';
+import { renderRows, renderColumnHeader, renderBreadcrumb, getRecent, selectionSizeLabel } from '../pane.js';
 import { SIDEBAR_FULL } from '../sidebar-data.js';
 import { applyLayout } from '../layout.js';
+import { openPalette, isPaletteOpen } from '../palette.js';
 
 const LAYOUT_OPTS = [
   { id: '1',  icn: 'one',       title: 'Single' },
@@ -72,21 +73,21 @@ function commandBar(ctx) {
     <button class="cmdbtn" data-action="delete">${iconHTML('trash', 15)}<span>Delete</span></button>
     <span class="a-sep"></span>
     <button class="cmdbtn" data-action="compare">${iconHTML('compare', 15)}<span>Compare</span></button>
+    <div class="a-palette">
+      ${iconHTML('search', 14)}
+      <input data-palette class="palette-input" placeholder="Go to folder, search, or run a command" />
+      <kbd>Ctrl K</kbd>
+    </div>
     <div class="spacer"></div>
-    ${viewPicker(ctx)}
-    <span class="a-sep"></span>
     ${layoutPicker(ctx)}
     <span class="a-sep"></span>
-    <div class="a-search">
-      ${iconHTML('search', 14)}
-      <input data-search placeholder="Search current folder" value="${ctx.panes[ctx.activePane].filter || ''}" />
-    </div>
+    ${viewPicker(ctx)}
   `;
   bindClicks(bar, ctx);
   bindNav(bar, ctx);
   bindLayout(bar, ctx);
   bindView(bar, ctx);
-  bindSearch(bar, ctx);
+  bindPalette(bar, ctx);
   return bar;
 }
 
@@ -157,6 +158,7 @@ function paneCard(ctx, pane, i) {
   const rows = renderRows(pane, {
     onActivate: (entry) => ctx.onActivateEntry(i, entry),
     onPaneActivate: () => ctx.setActivePane(i),
+    onRename: (oldName, newName) => ctx.onRename(i, oldName, newName),
   });
   card.appendChild(rows);
   return card;
@@ -208,8 +210,9 @@ function tabBar(ctx, pane, paneIdx) {
 function statusBar(ctx) {
   const pane = ctx.panes[ctx.activePane];
   const bar = el('div', 'a-statusbar');
+  const sizeLabel = selectionSizeLabel(pane);
   bar.innerHTML = `
-    <span>Pane ${ctx.activePane + 1} · ${pane.entries.length} items · ${pane.selected.size} selected</span>
+    <span>Pane ${ctx.activePane + 1} · ${pane.entries.length} items · ${pane.selected.size} selected${sizeLabel ? ` · ${sizeLabel}` : ''}</span>
     <div class="spacer"></div>
     <span>${pane.path}</span>
   `;
@@ -255,9 +258,9 @@ function bindNav(scope, ctx) {
 }
 
 const VIEW_OPTS = [
-  { id: 'details', icn: 'list',     title: 'Details' },
-  { id: 'compact', icn: 'sidebar',  title: 'Compact' },
-  { id: 'tiles',   icn: 'grid4',    title: 'Tiles' },
+  { id: 'details', icn: 'view-details', title: 'Details' },
+  { id: 'compact', icn: 'view-compact', title: 'Compact' },
+  { id: 'tiles',   icn: 'view-tiles',   title: 'Tiles' },
 ];
 
 function viewPicker(ctx) {
@@ -277,10 +280,21 @@ function bindLayout(scope, ctx) {
     el.addEventListener('click', () => ctx.setLayout(el.dataset.layout)));
 }
 
-function bindSearch(scope, ctx) {
-  const input = scope.querySelector('[data-search]');
+// Palette anchor — focus opens the overlay below this input. Same shape
+// as Cmd's bindPalette; the global Ctrl+K / Ctrl+L handler in app.js
+// finds the input via the shared `.palette-input` class.
+function bindPalette(scope, ctx) {
+  const input = scope.querySelector('[data-palette]');
   if (!input) return;
-  input.addEventListener('input', () => ctx.onFilter(ctx.activePane, input.value));
+  const open = () => openPalette({
+    anchor: input,
+    input,
+    ctx,
+    getPane: () => ctx.panes[ctx.activePane],
+    onClose: () => { input.value = ''; },
+  });
+  input.addEventListener('focus', () => { if (!isPaletteOpen()) open(); });
+  input.addEventListener('input', () => { if (input.value && !isPaletteOpen()) open(); });
 }
 
 function freeLabelGB(bytes) {

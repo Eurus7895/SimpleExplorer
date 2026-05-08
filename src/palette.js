@@ -58,7 +58,7 @@ export function closePalette() {
 //   - embedded input (Fluent direction): no `input` passed; we render
 //     and focus our own. Without an `anchor`, the overlay is centered
 //     near the top of the viewport like Spotlight / VS Code's palette.
-export function openPalette({ anchor, input, ctx, getPane, onClose }) {
+export function openPalette({ anchor, input, ctx, getPane, onClose, initialQuery }) {
   closePalette();
 
   const overlay = document.createElement('div');
@@ -87,6 +87,11 @@ export function openPalette({ anchor, input, ctx, getPane, onClose }) {
   if (anchor) positionUnder(overlay, anchor);
   else positionFloat(overlay);
 
+  if (initialQuery != null) {
+    useInput.value = initialQuery;
+    // Cursor at end so the user can extend the path / query.
+    setTimeout(() => useInput.setSelectionRange(initialQuery.length, initialQuery.length), 0);
+  }
   if (ownsInput) setTimeout(() => useInput.focus(), 0);
 
   const state = {

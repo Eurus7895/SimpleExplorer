@@ -6,15 +6,24 @@ in [`../CLAUDE.md`](../CLAUDE.md). This file is the source of truth for
 **what's painted but not wired**, and **what hasn't been started**.
 
 Status as of the last commit on `claude/review-roadmap-MKEpx`:
-post-MVP, pre-v1. Phases 1, 1.5, 2, 3, 4 (Cmd Ctrl+K palette + tab
-affordances + resize smoothness), and 5 (sort + view modes) have
-shipped. The Workspace direction has been removed (one less skin
-to maintain); the remaining directions are Fluent (A) and Cmd (B).
-Remaining work lives in Phase 6 (QoL grab-bag) and Phase 7
-(deferred larger features).
+post-MVP, pre-v1. Phases 1, 1.5, 2, 3, 4, 5, and 6a (Quick UX
+wins + Cmd rail redesign) have shipped. The Workspace direction
+has been removed; the remaining directions are Fluent (A) and
+Cmd (B). Remaining work: pane-activation refactor + drag-and-drop
+in Phase 6, and the Phase 7 deferred features (tree view,
+recursive search, integrated terminal, …).
 
 ## Shipped
 
+- **Phase 6a — Quick UX wins + Cmd rail redesign.** Esc clears the
+  active pane selection; status bars show a byte-sum of selected
+  files; F2 triggers an inline rename input on the row instead of
+  a `prompt()` modal; Ctrl+L opens the palette pre-filled with the
+  active pane's path; `npm run build` auto-copies
+  `extras/shellhelp.exe` into `dist/`. Direction B's rail follows
+  the Claude Design redesign — vertical icon + label, Pinned dropped,
+  click-to-explain detail panel showing recents / drives / docs /
+  downloads.
 - **Phase 5 — sort + view modes.** Each tab carries `sort: { key, dir }`
   and `view` (`details` / `compact` / `tiles`). Folders cluster
   first; the comparator handles `name` (locale-aware,
@@ -417,7 +426,40 @@ padding; Tiles = wrapping flex grid of 92×88 px cells (column
 header hidden in Tiles). Tree and Column view stay deferred to
 Phase 7.
 
-### Phase 6 — Quality of life, smaller items (one-off, mix and match)
+### ~~Phase 6a — Quick UX wins~~ (shipped)
+
+- **Esc clears selection** in the active pane (`bindGlobalKeys`
+  augmentation; existing type-jump-buffer clear stays).
+- **Status-bar selection size sum.** New `selectionSizeLabel(pane)`
+  in `pane.js` totals bytes of selected files; both `a-statusbar`
+  and `b-pane__foot` show the result. Folder-only selections show
+  nothing; mixed (file + folder) selections suffix `(files only)`
+  to flag that folder size needs a recursive walk we don't do.
+- **F2 inline rename.** New `pane.renaming` field; when set,
+  `renderRows` substitutes the row's `<span class="row__label">`
+  with an autoFocused `<input class="row__rename">` (basename
+  pre-selected, extension preserved). Enter commits via
+  `fs.rename`; Esc / blur cancels. Replaces the previous
+  `prompt()` modal.
+- **Ctrl+L → palette in path mode.** `openPalette` accepts an
+  optional `initialQuery`; the global keydown handler maps Ctrl+L
+  to opening / focusing the palette with the active pane's path
+  pre-filled (cursor at end). Cmd dispatches an `input` event so
+  the palette's path-completion mode kicks in.
+- **`npm run build` post-step** — `scripts/copy-helper.mjs` copies
+  `extras/shellhelp.exe` into `dist/simpleexplorer/extras/` after
+  `neu build`. Idempotent; silently skips when the helper isn't
+  built yet.
+- **Cmd rail redesign** (from Claude Design handoff). Drop the
+  Pinned section; five vertical icon + label items (Home, Recent,
+  Downloads, Docs, Drives) on a 64 px rail. Click any non-Home
+  item opens a 200 px detail panel listing entries inside that
+  category — Recent reads from `getRecent()`; Drives reads from
+  `ctx.drives`. Click an entry to navigate the active pane; click
+  the same rail icon to close. Default open: `Recent`.
+  Persisted under `settings.cmdRailOpen`.
+
+### Phase 6 — Pending (smaller items, mix and match)
 
 - **Pane-activation refactor** so cross-pane row clicks work without
   re-rendering. Today, `setActivePane()` triggers a full `render()` which
@@ -425,16 +467,9 @@ Phase 7.
   the active CSS class directly on pane cards instead of re-rendering;
   re-render only when something else (layout / direction / theme)
   actually changed. Will let row click in a non-active pane both select
-  and activate cleanly. Tracked here because it's deferred from the
-  initial bug fix (which only handles the same-pane case).
-- `npm run build` post-step: auto-copy `extras/shellhelp.exe` into the
-  produced `dist/simpleexplorer/extras/`. Currently manual.
+  and activate cleanly.
 - Drag-and-drop between panes (move within drive, copy across drives —
   same rule stock Explorer uses).
-- Status-bar selection size sum (sum of bytes when ≥ 1 file selected).
-- Ctrl+L focus address bar (currently no address-bar focus mode).
-- F2 inline rename instead of `prompt()` modal.
-- Esc clears selection.
 
 ### Phase 7 — Larger features (deferred, design needed)
 

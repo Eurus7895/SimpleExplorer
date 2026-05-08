@@ -8,7 +8,7 @@
     "start": "powershell -ExecutionPolicy Bypass -File scripts/run.ps1",
     "setup": "neu update",
     "dev": "neu run",
-    "build": "neu build"
+    "build": "neu build && node scripts/copy-helper.mjs"
   },
   "devDependencies": {
     "@neutralinojs/neu": "^11.0.0"
