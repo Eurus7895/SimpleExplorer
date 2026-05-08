@@ -138,6 +138,7 @@ function sidebar(ctx) {
 
 function paneCard(ctx, pane, i) {
   const card = el('div', 'a-pane' + (i === ctx.activePane ? ' a-pane--active' : ''));
+  card.dataset.paneIdx = i;
   card.addEventListener('click', () => ctx.setActivePane(i));
 
   card.appendChild(tabBar(ctx, pane, i));
@@ -207,7 +208,7 @@ function tabBar(ctx, pane, paneIdx) {
   return bar;
 }
 
-function statusBar(ctx) {
+export function statusBar(ctx) {
   const pane = ctx.panes[ctx.activePane];
   const bar = el('div', 'a-statusbar');
   const sizeLabel = selectionSizeLabel(pane);

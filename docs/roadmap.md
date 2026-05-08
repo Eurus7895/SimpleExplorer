@@ -92,14 +92,6 @@ recursive search, integrated terminal, …).
 
 ## Known bugs
 
-- **Cross-pane row double-click swallowed** *(workaround documented below)*.
-  Clicking a row in a non-active pane currently only selects, it no longer
-  activates that pane (we had to stop the click from bubbling to the pane
-  card or same-pane double-click was broken too). To enter a folder in a
-  pane that isn't active, click the pane's chrome (header / breadcrumb /
-  empty area) once to activate it, then double-click the folder. Fix:
-  refactor pane activation to toggle a CSS class directly instead of
-  triggering a full re-render. Tracked under Phase 6.
 - **`extras/shellhelp.exe` not yet compiled.** Right-click → Properties /
   Delete-to-trash / drive list fall back to PowerShell (~250–400 ms vs
   ~50 ms native). Build once with MSVC; `scripts/run.ps1` automates from
@@ -459,17 +451,27 @@ Phase 7.
   the same rail icon to close. Default open: `Recent`.
   Persisted under `settings.cmdRailOpen`.
 
-### Phase 6 — Pending (smaller items, mix and match)
+### ~~Phase 6b.1 — Pane-activation refactor~~ (shipped)
 
-- **Pane-activation refactor** so cross-pane row clicks work without
-  re-rendering. Today, `setActivePane()` triggers a full `render()` which
-  rebuilds the row DOM and breaks any in-flight double-click. Fix: toggle
-  the active CSS class directly on pane cards instead of re-rendering;
-  re-render only when something else (layout / direction / theme)
-  actually changed. Will let row click in a non-active pane both select
-  and activate cleanly.
+`setActivePane()` no longer triggers a full `render()`. New
+`applyActivePane(i)` in `app.js` toggles the active class on existing
+pane cards (looked up by `data-pane-idx`) and rebuilds Fluent's
+global `.a-statusbar` in place — no row DOM teardown. The
+`e.stopPropagation()` workaround on `pane.js`'s row click is gone:
+a single click in a non-active pane now both selects the row *and*
+activates the pane, and double-clicking a folder in a non-active
+pane opens it without the "click chrome first" detour. Cmd's
+per-pane `b-pane__foot` is unaffected — it shows that pane's own
+stats and doesn't depend on which pane is active.
+
+### Phase 6b.2 — Pending
+
 - Drag-and-drop between panes (move within drive, copy across drives —
-  same rule stock Explorer uses).
+  same rule stock Explorer uses). HTML5 DnD source on rows, drop on
+  `.rows`, payload through `dataTransfer`, op routed through a
+  refactored `doAction('copy'|'move', { srcPaneIdx, dstPaneIdx,
+  names })`. Now unblocked because activation no longer tears down
+  rows mid-gesture.
 
 ### Phase 7 — Larger features (deferred, design needed)
 

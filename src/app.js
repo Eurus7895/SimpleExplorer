@@ -4,7 +4,7 @@
 
 import * as fs from './fs.js';
 import { createPaneState, navigate, goBack, goForward, goUp, loadPath, tabNew, tabClose, tabSwitch, tabSnapshot } from './pane.js';
-import { renderFluent } from './directions/fluent.js';
+import { renderFluent, statusBar as fluentStatusBar } from './directions/fluent.js';
 import { renderCmd } from './directions/cmd.js';
 import { LAYOUT_DEFS, DEFAULT_SPLITS } from './layout.js';
 import { openPalette, isPaletteOpen } from './palette.js';
@@ -101,6 +101,21 @@ async function safeLoad(state) {
   }
 }
 
+// Cheap active-pane swap: toggles classes on existing pane cards and
+// rebuilds Fluent's global status bar in place. No full render() — keeps
+// row DOM stable so cross-pane click + dblclick work in one gesture.
+function applyActivePane(i) {
+  if (i < 0 || i >= panes.length) return;
+  activePane = i;
+  document.querySelectorAll('[data-pane-idx]').forEach((card) => {
+    const isActive = Number(card.dataset.paneIdx) === i;
+    if (card.classList.contains('a-pane')) card.classList.toggle('a-pane--active', isActive);
+    if (card.classList.contains('b-pane')) card.classList.toggle('b-pane--active', isActive);
+  });
+  const oldBar = document.querySelector('.a-statusbar');
+  if (oldBar) oldBar.replaceWith(fluentStatusBar({ panes, activePane }));
+}
+
 function render() {
   const root = document.getElementById('root');
   root.innerHTML = '';
@@ -113,7 +128,7 @@ function render() {
     layoutDef: LAYOUT_DEFS[layoutId] || LAYOUT_DEFS['2v'],
     splits: settings.splits[layoutId] || { ...(DEFAULT_SPLITS[layoutId] || {}) },
     panes,
-    activePane,
+    get activePane() { return activePane; },
     home: homePath,
     drives,
     quickAccessPath,
@@ -146,14 +161,7 @@ function render() {
         catch (e) { console.warn('app.exit failed:', e); }
       }
     },
-    setActivePane(i) {
-      // No-op when already active — re-rendering on every row click was
-      // tearing down the row mid-double-click, so the dblclick event lost
-      // its target and "open folder" silently failed.
-      if (i === activePane) return;
-      activePane = i;
-      render();
-    },
+    setActivePane(i) { applyActivePane(i); },
     setDirection(d) { settings.direction = d; saveSettings(); render(); },
     setTheme(t) { settings[dir.themeKey] = t; saveSettings(); render(); },
     setLayout(l) { settings[dir.layoutKey] = l; saveSettings(); render(); },

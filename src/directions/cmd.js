@@ -181,6 +181,7 @@ function escapeHtml(s) {
 
 function paneCard(ctx, pane, i) {
   const card = el('div', 'b-pane' + (i === ctx.activePane ? ' b-pane--active' : ''));
+  card.dataset.paneIdx = i;
   card.addEventListener('click', () => ctx.setActivePane(i));
 
   const head = el('div', 'b-pane__head');
