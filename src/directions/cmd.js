@@ -6,7 +6,7 @@ import { iconHTML } from '../icons.js';
 import { renderRows, buildSegPath } from '../pane.js';
 import { RAIL_ITEMS } from '../sidebar-data.js';
 import { applyLayout } from '../layout.js';
-import { openPalette, closePalette } from '../palette.js';
+import { openPalette, closePalette, isPaletteOpen } from '../palette.js';
 import * as fs from '../fs.js';
 
 const LAYOUT_OPTS = [
@@ -214,8 +214,11 @@ function bindPalette(scope, ctx) {
     getPane: () => ctx.panes[ctx.activePane],
     onClose: () => { input.value = ''; },
   });
-  input.addEventListener('focus', open);
-  input.addEventListener('input', () => { if (input.value) open(); });
+  input.addEventListener('focus', () => { if (!isPaletteOpen()) open(); });
+  // If the user dismissed via Esc without blurring and types again, reopen.
+  // Skipping when already open is critical — re-entering openPalette would
+  // call closePalette → onClose → clear the input, eating the keystroke.
+  input.addEventListener('input', () => { if (input.value && !isPaletteOpen()) open(); });
   // Direction-level Ctrl+K handled here; the global handler in app.js
   // also calls focus() on this input when active direction is cmd.
   scope.dataset.paletteAnchor = '1';
