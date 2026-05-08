@@ -6,6 +6,7 @@
 import { iconHTML } from '../icons.js';
 import { renderRows, renderColumnHeader, renderBreadcrumb, getRecent } from '../pane.js';
 import { SIDEBAR_FULL } from '../sidebar-data.js';
+import { applyLayout } from '../layout.js';
 
 const LAYOUT_OPTS = [
   { id: '1',  icn: 'one',       title: 'Single' },
@@ -26,13 +27,8 @@ export function renderFluent(root, ctx) {
   body.appendChild(sidebar(ctx));
 
   const grid = el('div', 'a-grid');
-  grid.style.gridTemplateColumns = ctx.layoutDef.cols;
-  grid.style.gridTemplateRows = ctx.layoutDef.rows;
-
-  ctx.panes.slice(0, ctx.layoutDef.panes).forEach((pane, i) => {
-    const card = pane3rdAware(ctx, i, paneCard(ctx, pane, i));
-    grid.appendChild(card);
-  });
+  const cards = ctx.panes.slice(0, ctx.layoutDef.panes).map((pane, i) => paneCard(ctx, pane, i));
+  applyLayout(grid, ctx.layout, ctx.splits, cards, ctx.onSplitChange);
 
   body.appendChild(grid);
   app.appendChild(body);
@@ -151,6 +147,7 @@ function paneCard(ctx, pane, i) {
 
   const rows = renderRows(pane, {
     onActivate: (entry) => ctx.onActivateEntry(i, entry),
+    onPaneActivate: () => ctx.setActivePane(i),
   });
   card.appendChild(rows);
   return card;
@@ -189,13 +186,6 @@ function tabBar(ctx, pane, paneIdx) {
   });
   bar.appendChild(plus);
   return bar;
-}
-
-function pane3rdAware(ctx, i, card) {
-  if (ctx.layoutDef.thirdSpansFull && i === 2) {
-    card.style.gridColumn = '1 / -1';
-  }
-  return card;
 }
 
 function statusBar(ctx) {

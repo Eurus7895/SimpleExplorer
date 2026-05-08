@@ -247,7 +247,7 @@ kbd {
 .a-sidebar__item .icn { color: var(--text-mute); }
 
 .a-grid {
-  flex: 1; display: grid; gap: 6px; padding: 6px;
+  flex: 1; display: grid; padding: 6px;
   background: var(--bg); min-height: 0;
 }
 .a-pane {
@@ -373,7 +373,7 @@ kbd {
 .b-rail__btn:hover { background: var(--hover); color: var(--text); }
 .b-rail__btn.on { background: var(--accent-bg); color: var(--accent); }
 
-.b-grid { flex: 1; display: grid; gap: 8px; padding: 8px; min-height: 0; }
+.b-grid { flex: 1; display: grid; padding: 8px; min-height: 0; }
 .b-pane {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -440,3 +440,15 @@ kbd {
 }
 .ctx-menu__item--loading:hover { background: transparent; }
 .ctx-menu__arrow { color: var(--text-dim); font-size: 14px; line-height: 1; }
+
+.splitter {
+  align-self: stretch; justify-self: stretch;
+  background: transparent;
+  position: relative; z-index: 1;
+  transition: background 80ms ease;
+}
+.splitter:hover, .splitter:active { background: var(--accent); }
+.splitter--col { cursor: col-resize; }
+.splitter--row { cursor: row-resize; }
+body.is-resizing-col, body.is-resizing-col * { cursor: col-resize !important; user-select: none; }
+body.is-resizing-row, body.is-resizing-row * { cursor: row-resize !important; user-select: none; }

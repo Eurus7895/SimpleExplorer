@@ -7,10 +7,11 @@ in [`../CLAUDE.md`](../CLAUDE.md). This file is the source of truth for
 
 Status as of the last commit on `claude/review-roadmap-MKEpx`:
 post-MVP, pre-v1. Phase 1 (chrome wiring), Phase 1.5 (full Windows
-shell context menu), and Phase 2 (real multi-tabs per pane) have
-shipped. The Workspace direction has been removed (one less skin to
-maintain); the remaining directions are Fluent (A) and Cmd (B). The
-remaining gap is the Ctrl+K palette and sort/view menus.
+shell context menu), Phase 2 (real multi-tabs per pane), and
+Phase 3 (folder-background right-click + resizable panes) have
+shipped. The Workspace direction has been removed (one less skin
+to maintain); the remaining directions are Fluent (A) and Cmd (B).
+The remaining gap is the Ctrl+K palette and sort/view menus.
 
 ## Shipped
 
@@ -18,6 +19,20 @@ remaining gap is the Ctrl+K palette and sort/view menus.
   controls, clickable breadcrumbs, Direction B rail navigation, dynamic
   drives section in the Fluent sidebar (real free-space numbers from
   `fs.listDrives()`).
+- **Phase 3 — folder-background right-click + resizable panes**.
+  Right-clicking the empty area of a pane opens a folder-scope menu
+  (Open in VS Code · Open in Terminal · New folder · Refresh · Show
+  in Explorer · Properties), with the OS shell extensions filling
+  in below for the folder itself via `helperMenu([pane.path])`.
+  `app.js` gained a `refresh` action; `reveal` now falls back to
+  `openInOS(pane.path)` when nothing is selected. A new
+  `src/layout.js` module owns `LAYOUT_DEFS` + `applyLayout()`,
+  which sets the grid template with a 6 px gutter track between
+  panes and inserts splitter divs there; drag updates a CSS-var
+  ratio (clamped 0.1 – 0.9), commits to `settings.splits[layoutId]`
+  on mouseup, persists under `simple-explorer.state.splits`. Both
+  directions now route through `applyLayout` instead of setting
+  `gridTemplateColumns/Rows` themselves.
 - **Phase 2 — real multi-tabs per pane**. Each Fluent pane now owns a
   tab list (`pane.tabs`); each tab has its own path, history,
   selection, entries, and filter. `+` opens a new tab at the active
@@ -311,36 +326,27 @@ MSVC. Until then, drive list / properties / delete fall back to
 PowerShell (~250–400 ms) and the new shell context menu silently
 degrades to the curated-only list.
 
-### Phase 3 — Folder background right-click + resizable panes (~half day each)
+### ~~Phase 3 — Folder background right-click + resizable panes~~ (shipped)
 
-**3a · Empty-space context menu.** Right-clicking the blank area of a
-pane (below the last row, or anywhere when the folder is empty) does
-nothing today. Wire a `contextmenu` listener on `.rows` that fires
-only when the target is the container itself / `.rows__empty`, and
-open a folder-scope menu via a new `showFolderContextMenu(x, y, pane)`
-in `pane.js`. Curated items: Open in VS Code · Open in Terminal ·
-New folder · Refresh · Show in Explorer · Properties. Below those,
-async-fill `helperMenu([pane.path])` so the OS shell extensions
-(Git Bash, 7-Zip, TortoiseSVN, Send to, …) appear for the folder
-itself. Touches: `pane.js` (new menu helper), `app.js` (`refresh`
-action; extend `reveal` to fall back to `openInOS(pane.path)` when
-nothing is selected).
+**3a · Empty-space context menu.** `pane.js`'s `renderRows` now
+listens for `contextmenu` on the `.rows` container itself (and
+`.rows__empty`); the new `showFolderContextMenu(x, y, pane)` opens
+a folder-scope menu (Open in VS Code · Open in Terminal · New folder ·
+Refresh · Show in Explorer · Properties) and async-fills shell
+extensions via `helperMenu([pane.path])`. `app.js` added a
+`refresh` action and `reveal` falls back to `openInOS(pane.path)`
+when nothing is selected. A new `onPaneActivate` opt on
+`renderRows` activates the right pane before opening the menu so
+dispatched actions don't target the wrong pane.
 
-**3b · Resizable panes.** Layouts (`2v`, `2h`, `3`, `4`) currently use
-a fixed 1fr 1fr grid with no gutter. Add a new `src/layout.js`
-exporting `LAYOUT_DEFS` + `applyLayout(grid, layoutId, splits, paneCards, onChange)`
-that sets `gridTemplateColumns/Rows` with a 6 px gutter track,
-places each card by explicit `grid-column / grid-row`, and inserts
-`splitter--col` / `splitter--row` divs in the gutter tracks. Drag
-clamps the ratio to 0.1 – 0.9, calls `onChange`, which persists +
-re-renders. Per-layout split ratios live in
-`simple-explorer.splits` (one shared map keyed by layout id;
-defaults 0.5). Splitters per layout: `1` none · `2v` 1 vertical ·
-`2h` 1 horizontal · `3` vertical (top row) + horizontal (between
-top row and full-width bottom) · `4` 1 vertical + 1 horizontal
-spanning both axes. `pane3rdAware` (third-pane full-width) folds
-into `applyLayout`. Both directions swap their `grid.style.gridTemplate*`
-+ `appendChild` lines for one `applyLayout(...)` call.
+**3b · Resizable panes.** New `src/layout.js` owns `LAYOUT_DEFS` +
+`DEFAULT_SPLITS` + `applyLayout(grid, layoutId, splits, paneCards, onChange)`,
+which sets the grid template with a 6 px gutter track, places each
+card by explicit `grid-column / grid-row`, and inserts splitter divs
+in the gutter tracks. Drag mutates the grid template directly each
+frame (clamped 0.1 – 0.9) and commits the ratio on mouseup;
+`onChange` persists `settings.splits[layoutId]` and re-renders. Both
+directions now go through `applyLayout`; `pane3rdAware` folded in.
 
 ### ~~Phase 2 — Real multi-tabs per pane~~ (shipped)
 

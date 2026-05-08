@@ -5,6 +5,7 @@
 import { iconHTML } from '../icons.js';
 import { renderRows, buildSegPath } from '../pane.js';
 import { RAIL_ITEMS } from '../sidebar-data.js';
+import { applyLayout } from '../layout.js';
 import * as fs from '../fs.js';
 
 const LAYOUT_OPTS = [
@@ -25,13 +26,8 @@ export function renderCmd(root, ctx) {
   body.appendChild(rail(ctx));
 
   const grid = el('div', 'b-grid');
-  grid.style.gridTemplateColumns = ctx.layoutDef.cols;
-  grid.style.gridTemplateRows = ctx.layoutDef.rows;
-
-  ctx.panes.slice(0, ctx.layoutDef.panes).forEach((pane, i) => {
-    const card = pane3rdAware(ctx, i, paneCard(ctx, pane, i));
-    grid.appendChild(card);
-  });
+  const cards = ctx.panes.slice(0, ctx.layoutDef.panes).map((pane, i) => paneCard(ctx, pane, i));
+  applyLayout(grid, ctx.layout, ctx.splits, cards, ctx.onSplitChange);
 
   body.appendChild(grid);
   app.appendChild(body);
@@ -102,6 +98,7 @@ function paneCard(ctx, pane, i) {
   const rows = renderRows(pane, {
     density: 'cmd',
     onActivate: (entry) => ctx.onActivateEntry(i, entry),
+    onPaneActivate: () => ctx.setActivePane(i),
   });
   card.appendChild(rows);
 
@@ -147,13 +144,6 @@ function chip(ctx, pane, paneIdx) {
   wrap.appendChild(segWrap);
   wrap.insertAdjacentHTML('beforeend', iconHTML('fwd', 10));
   return wrap;
-}
-
-function pane3rdAware(ctx, i, card) {
-  if (ctx.layoutDef.thirdSpansFull && i === 2) {
-    card.style.gridColumn = '1 / -1';
-  }
-  return card;
 }
 
 function layoutPicker(ctx) {
