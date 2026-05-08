@@ -154,6 +154,8 @@ function render() {
     onTabNew: async (i) => { await tabNew(panes[i], panes[i].path); saveTabs(); render(); },
     onTabClose: async (i, tabIdx) => { if (await tabClose(panes[i], tabIdx)) { saveTabs(); render(); } },
     onTabSwitch: async (i, tabIdx) => { await tabSwitch(panes[i], tabIdx); saveTabs(); render(); },
+    onSortChange: (i, sort) => { panes[i].sort = sort; saveTabs(); render(); },
+    onViewChange: (i, view) => { panes[i].view = view; saveTabs(); render(); },
     onAction: (action) => doAction(action),
     rerender: render,
   };

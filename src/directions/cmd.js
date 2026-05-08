@@ -89,11 +89,28 @@ function paneCard(ctx, pane, i) {
   head.appendChild(chip(ctx, pane, i));
   const spacer = el('div', 'spacer');
   head.appendChild(spacer);
-  head.insertAdjacentHTML('beforeend', `
-    <button class="iconbtn iconbtn--sm" title="View">${iconHTML('list', 14)}</button>
-    <button class="iconbtn iconbtn--sm" title="Sort">${iconHTML('sort', 14)}</button>
-    <button class="iconbtn iconbtn--sm" title="More">${iconHTML('more', 14)}</button>
-  `);
+  const viewBtn = el('button', 'iconbtn iconbtn--sm');
+  viewBtn.title = 'View';
+  viewBtn.innerHTML = iconHTML('list', 14);
+  viewBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    ctx.setActivePane(i);
+    openViewPopover(viewBtn, pane, (v) => ctx.onViewChange(i, v));
+  });
+  head.appendChild(viewBtn);
+  const sortBtn = el('button', 'iconbtn iconbtn--sm');
+  sortBtn.title = 'Sort';
+  sortBtn.innerHTML = iconHTML('sort', 14);
+  sortBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    ctx.setActivePane(i);
+    openSortPopover(sortBtn, pane, (s) => ctx.onSortChange(i, s));
+  });
+  head.appendChild(sortBtn);
+  const more = el('button', 'iconbtn iconbtn--sm');
+  more.title = 'More';
+  more.innerHTML = iconHTML('more', 14);
+  head.appendChild(more);
   card.appendChild(head);
 
   const rows = renderRows(pane, {
@@ -204,6 +221,80 @@ function bindPalette(scope, ctx) {
   scope.dataset.paletteAnchor = '1';
   // Expose the input so app.js's global Ctrl+K handler can find it.
   input.classList.add('cmd-palette-input');
+}
+
+const SORT_KEYS = [
+  { key: 'name',     label: 'Name' },
+  { key: 'size',     label: 'Size' },
+  { key: 'modified', label: 'Modified' },
+  { key: 'type',     label: 'Type' },
+];
+
+const VIEW_OPTIONS = [
+  { id: 'details', label: 'Details' },
+  { id: 'compact', label: 'Compact' },
+  { id: 'tiles',   label: 'Tiles' },
+];
+
+function openSortPopover(anchor, pane, onChange) {
+  const sort = pane.sort || { key: 'name', dir: 'asc' };
+  const items = SORT_KEYS.map((k) => ({
+    label: k.label,
+    active: k.key === sort.key,
+    hint: k.key === sort.key ? (sort.dir === 'asc' ? '↑' : '↓') : '',
+    onSelect: () => onChange(
+      sort.key === k.key
+        ? { key: k.key, dir: sort.dir === 'asc' ? 'desc' : 'asc' }
+        : { key: k.key, dir: 'asc' }
+    ),
+  }));
+  openPopover(anchor, items);
+}
+
+function openViewPopover(anchor, pane, onChange) {
+  const view = pane.view || 'details';
+  const items = VIEW_OPTIONS.map((o) => ({
+    label: o.label,
+    active: o.id === view,
+    onSelect: () => onChange(o.id),
+  }));
+  openPopover(anchor, items);
+}
+
+let openPopoverEl = null;
+function openPopover(anchor, items) {
+  closePopover();
+  const pop = el('div', 'popover');
+  items.forEach((it) => {
+    const row = el('div', 'popover__item' + (it.active ? ' popover__item--active' : ''));
+    row.innerHTML = `<span>${it.label}</span>${it.hint ? `<span class="popover__hint">${it.hint}</span>` : ''}`;
+    row.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      it.onSelect?.();
+      closePopover();
+    });
+    pop.appendChild(row);
+  });
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect();
+  pop.style.position = 'fixed';
+  pop.style.top = (r.bottom + 4) + 'px';
+  pop.style.right = (window.innerWidth - r.right) + 'px';
+  openPopoverEl = pop;
+  setTimeout(() => document.addEventListener('mousedown', outsideClose, true), 0);
+}
+
+function outsideClose(e) {
+  if (!openPopoverEl) return;
+  if (openPopoverEl.contains(e.target)) return;
+  closePopover();
+}
+
+function closePopover() {
+  if (!openPopoverEl) return;
+  openPopoverEl.remove();
+  openPopoverEl = null;
+  document.removeEventListener('mousedown', outsideClose, true);
 }
 
 function el(tag, cls) {

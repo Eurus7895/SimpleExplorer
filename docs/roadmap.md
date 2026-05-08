@@ -6,16 +6,28 @@ in [`../CLAUDE.md`](../CLAUDE.md). This file is the source of truth for
 **what's painted but not wired**, and **what hasn't been started**.
 
 Status as of the last commit on `claude/review-roadmap-MKEpx`:
-post-MVP, pre-v1. Phase 1 (chrome wiring), Phase 1.5 (full Windows
-shell context menu), Phase 2 (real multi-tabs per pane), Phase 3
-(folder-background right-click + resizable panes), and Phase 4
-(Cmd Ctrl+K palette + tab affordances + resize smoothness) have
+post-MVP, pre-v1. Phases 1, 1.5, 2, 3, 4 (Cmd Ctrl+K palette + tab
+affordances + resize smoothness), and 5 (sort + view modes) have
 shipped. The Workspace direction has been removed (one less skin
 to maintain); the remaining directions are Fluent (A) and Cmd (B).
-The remaining gap is sort/view menus.
+Remaining work lives in Phase 6 (QoL grab-bag) and Phase 7
+(deferred larger features).
 
 ## Shipped
 
+- **Phase 5 — sort + view modes.** Each tab carries `sort: { key, dir }`
+  and `view` (`details` / `compact` / `tiles`). Folders cluster
+  first; the comparator handles `name` (locale-aware,
+  case-insensitive) / `size` / `modified` / `type`. Fluent's
+  column-header cells (`cols__seg`) are clickable — same-key click
+  toggles asc/desc; Fluent's command bar gained an `a-view`
+  segmented chooser before the layout picker. Cmd's pane-header
+  Sort and View buttons open generic `.popover` overlays.
+  Compact = denser padding on the same grid; Tiles = wrapping
+  flex grid of 92 × 88 px cells with the column header hidden.
+  Persistence: `tabSnapshot` now serializes `{ path, sort, view }`,
+  and `createPaneState` accepts both legacy string seeds and the
+  new shape.
 - **Phase 1 — chrome wiring** (commit `0b7242e`). Fluent window
   controls, clickable breadcrumbs, Direction B rail navigation, dynamic
   drives section in the Fluent sidebar (real free-space numbers from
@@ -116,7 +128,7 @@ These render and look right, but clicking them does nothing today:
 | Where | Element | Should do |
 | --- | --- | --- |
 | Direction B | Rail icons (Pinned / Recent / Drives) | open popover panels |
-| Direction B | Pane header View / Sort / More | sort dropdown, view-mode menu |
+| Direction B | Pane header More button | placeholder; no menu yet |
 
 ### Not started — explicitly out of MVP scope
 
@@ -387,14 +399,23 @@ active. Fluent tabs now close on middle-click. Pane resize
 mousemove updates coalesce to one per animation frame and suppress
 `.row` pointer events during the drag.
 
-### Phase 5 — Sort + view modes (~1–2 hours)
+### ~~Phase 5 — Sort + view modes~~ (shipped)
 
-The "Sort" / "View" buttons on Direction B's pane header (and the column
-header chevron in Fluent) need menus:
-
-- Sort: Name / Size / Modified / Type, asc / desc, sticks per pane.
-- View: Details (current), Tiles, Compact (denser rows). Tree and Column
-  view stay deferred.
+Each tab now carries its own `sort: { key, dir }` and `view`
+(`details` / `compact` / `tiles`). `pane.js` exports
+`sortedEntries(state)` (folders cluster first, then comparator by
+key); `filtered()` now sorts before filtering. Persistence:
+`tabSnapshot` now returns `[{ path, sort, view }]` and
+`createPaneState` accepts both legacy string seeds and the new
+object shape. Fluent: column-header cells (`cols__seg`) are
+clickable — same-key click toggles asc/desc, different key
+switches and resets to asc. Fluent command bar gained an `a-view`
+segmented chooser before the layout picker. Cmd: pane-header
+Sort and View buttons open generic `.popover` overlays anchored
+under the button. Compact = same grid as details with denser
+padding; Tiles = wrapping flex grid of 92×88 px cells (column
+header hidden in Tiles). Tree and Column view stay deferred to
+Phase 7.
 
 ### Phase 6 — Quality of life, smaller items (one-off, mix and match)
 
