@@ -213,10 +213,12 @@ function paneCard(ctx, pane, i) {
   card.appendChild(head);
 
   const rows = renderRows(pane, {
+    paneIdx: i,
     density: 'cmd',
     onActivate: (entry) => ctx.onActivateEntry(i, entry),
     onPaneActivate: () => ctx.setActivePane(i),
     onRename: (oldName, newName) => ctx.onRename(i, oldName, newName),
+    onDrop: (srcIdx, names, op) => ctx.onDrop(srcIdx, i, names, op),
   });
   card.appendChild(rows);
 

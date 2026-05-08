@@ -190,6 +190,20 @@ function render() {
       render();
     },
     onAction: (action) => doAction(action),
+    onDrop: async (srcIdx, dstIdx, names, op) => {
+      if (srcIdx === dstIdx || !names?.length) return;
+      const src = panes[srcIdx];
+      const dst = panes[dstIdx];
+      const fn = op === 'copy' ? fs.copy : fs.move;
+      for (const name of names) {
+        try { await fn(fs.joinPath(src.path, name), fs.joinPath(dst.path, name)); }
+        catch (e) { console.warn(`${op} failed for ${name}:`, e); }
+      }
+      await Promise.all([safeLoad(src), safeLoad(dst)]);
+      activePane = dstIdx;
+      saveTabs();
+      render();
+    },
     rerender: render,
   };
   document.documentElement.dataset.theme = ctx.theme;

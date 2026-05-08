@@ -136,7 +136,6 @@ These render and look right, but clicking them does nothing today:
 - Tree view (left of the row list, expandable folders)
 - Column view (Finder-style cascading panes)
 - Recursive search (only filter visible rows in MVP)
-- Drag-and-drop between panes
 - Drag-and-drop from / to stock Windows Explorer
 - Custom Win11 Mica title bar chrome (frameless window + own controls)
 - Full Windows shell context menu via `IContextMenu`
@@ -464,14 +463,30 @@ pane opens it without the "click chrome first" detour. Cmd's
 per-pane `b-pane__foot` is unaffected — it shows that pane's own
 stats and doesn't depend on which pane is active.
 
-### Phase 6b.2 — Pending
+### ~~Phase 6b.2 — Drag-and-drop between panes~~ (shipped)
 
-- Drag-and-drop between panes (move within drive, copy across drives —
-  same rule stock Explorer uses). HTML5 DnD source on rows, drop on
-  `.rows`, payload through `dataTransfer`, op routed through a
-  refactored `doAction('copy'|'move', { srcPaneIdx, dstPaneIdx,
-  names })`. Now unblocked because activation no longer tears down
-  rows mid-gesture.
+HTML5 DnD wired in `src/pane.js`: rows are `draggable`, the rows
+container handles `dragenter` / `dragover` / `dragleave` / `drop`.
+A module-scope `activeDrag` cache holds the in-flight payload so
+`dragover` can pick a same-drive vs cross-drive cursor (HTML5
+hides dataTransfer values during drag, only the types list is
+visible). `dragstart` selects the dragged row if it wasn't already
+in the selection — matches stock Explorer. Modifier keys override
+the default: Ctrl forces copy, Shift forces move; otherwise
+same-drive = move, cross-drive = copy.
+
+Drops route through a new `ctx.onDrop(srcIdx, dstIdx, names, op)`
+in `app.js` that calls `fs.copy` / `fs.move` per item, reloads
+both panes via `safeLoad`, and activates the destination pane so
+post-drop state is sane. `fs.sameDrive(a, b)` (drive-letter
+compare on normalized paths) lives next to the existing path
+helpers. `text/uri-list` is also stuffed onto `dataTransfer` —
+free groundwork for the Phase 7 OS-DnD work.
+
+Visual cue: `.rows--drop` adds an inset accent ring + tinted
+background while a foreign drag is over the destination pane;
+an enter/leave depth counter avoids flicker as the cursor
+crosses child elements.
 
 ### Phase 7 — Larger features (deferred, design needed)
 
