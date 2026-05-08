@@ -452,3 +452,6 @@ kbd {
 .splitter--row { cursor: row-resize; }
 body.is-resizing-col, body.is-resizing-col * { cursor: col-resize !important; user-select: none; }
 body.is-resizing-row, body.is-resizing-row * { cursor: row-resize !important; user-select: none; }
+/* Suppress hover repaints inside panes during a drag — with hundreds of
+   rows :hover would otherwise fight the resize reflow on every move. */
+body.is-resizing-col .row, body.is-resizing-row .row { pointer-events: none; }

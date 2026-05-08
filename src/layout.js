@@ -95,9 +95,11 @@ function place(card, col, row) {
   card.style.gridRow = row;
 }
 
-// During a drag we mutate gridTemplateColumns/Rows directly each frame
-// (no React-style re-render), then commit once on mouseup so localStorage
-// only takes one write per drag.
+// During a drag we coalesce mousemove updates to one per animation
+// frame (raw mousemoves can fire 100+ Hz, faster than we can repaint),
+// then commit the final ratio once on mouseup so localStorage only takes
+// one write per drag. Pane content gets pointer-events:none via the body
+// .is-resizing-* class so .row:hover repaints don't fight the reflow.
 function makeSplitter(axis, col, row, grid, splits, onChange) {
   const el = document.createElement('div');
   el.className = `splitter splitter--${axis}`;
@@ -111,9 +113,14 @@ function makeSplitter(axis, col, row, grid, splits, onChange) {
     const rect = grid.getBoundingClientRect();
     const total = (axis === 'col' ? rect.width : rect.height) - GUTTER_PX;
 
-    const onMove = (m) => {
-      const offset = axis === 'col' ? m.clientX - rect.left : m.clientY - rect.top;
-      const ratio = clamp(offset / total);
+    let pending = null;
+    let rafId = null;
+
+    const flush = () => {
+      rafId = null;
+      if (pending == null) return;
+      const ratio = pending;
+      pending = null;
       if (axis === 'col') {
         grid.style.gridTemplateColumns = `${ratio}fr ${GUTTER_PX}px ${1 - ratio}fr`;
       } else {
@@ -122,10 +129,17 @@ function makeSplitter(axis, col, row, grid, splits, onChange) {
       el.dataset.pendingRatio = String(ratio);
     };
 
+    const onMove = (m) => {
+      const offset = axis === 'col' ? m.clientX - rect.left : m.clientY - rect.top;
+      pending = clamp(offset / total);
+      if (rafId == null) rafId = requestAnimationFrame(flush);
+    };
+
     const onUp = () => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       document.body.classList.remove('is-resizing-' + axis);
+      if (rafId != null) { cancelAnimationFrame(rafId); flush(); }
       const ratio = Number(el.dataset.pendingRatio);
       if (Number.isFinite(ratio)) {
         const next = { ...splits };
