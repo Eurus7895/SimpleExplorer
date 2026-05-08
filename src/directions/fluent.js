@@ -164,6 +164,14 @@ function tabBar(ctx, pane, paneIdx) {
       ctx.setActivePane(paneIdx);
       if (tabIdx !== pane.activeTabIdx) ctx.onTabSwitch(paneIdx, tabIdx);
     });
+    // Middle-click closes (Chrome / VS Code convention). preventDefault
+    // suppresses WebView's auto-scroll cursor on middle button.
+    tabEl.addEventListener('mousedown', (e) => {
+      if (e.button !== 1) return;
+      e.preventDefault();
+      e.stopPropagation();
+      ctx.onTabClose(paneIdx, tabIdx);
+    });
     if (pane.tabs.length > 1) {
       const close = el('span', 'a-tab__close');
       close.innerHTML = iconHTML('close', 11);

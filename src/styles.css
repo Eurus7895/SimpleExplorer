@@ -452,3 +452,40 @@ kbd {
 .splitter--row { cursor: row-resize; }
 body.is-resizing-col, body.is-resizing-col * { cursor: col-resize !important; user-select: none; }
 body.is-resizing-row, body.is-resizing-row * { cursor: row-resize !important; user-select: none; }
+/* Suppress hover repaints inside panes during a drag — with hundreds of
+   rows :hover would otherwise fight the resize reflow on every move. */
+body.is-resizing-col .row, body.is-resizing-row .row { pointer-events: none; }
+
+/* ── Cmd Ctrl+K palette ─────────────────────────────────────────── */
+.palette {
+  position: fixed; z-index: 50;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.18);
+  display: flex; flex-direction: column;
+  max-height: 360px; min-height: 60px;
+  overflow: hidden;
+}
+.palette__mode {
+  position: absolute; top: -10px; left: 12px;
+  height: 18px; padding: 0 8px;
+  display: inline-flex; align-items: center;
+  background: var(--accent-bg); color: var(--accent);
+  border: 1px solid var(--accent); border-radius: 9px;
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px;
+}
+.palette__list { flex: 1; overflow: auto; padding: 6px; min-height: 0; }
+.palette__row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-radius: 4px;
+  font-size: 12px; color: var(--text); cursor: pointer;
+}
+.palette__row--active { background: var(--accent-bg); color: var(--accent); }
+.palette__label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette__hint {
+  color: var(--text-dim); font-size: 11px;
+  max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.palette__row--active .palette__hint { color: var(--accent); opacity: .8; }
+.palette__empty {
+  padding: 16px; color: var(--text-dim); text-align: center; font-size: 12px;
+}

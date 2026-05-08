@@ -7,11 +7,12 @@ in [`../CLAUDE.md`](../CLAUDE.md). This file is the source of truth for
 
 Status as of the last commit on `claude/review-roadmap-MKEpx`:
 post-MVP, pre-v1. Phase 1 (chrome wiring), Phase 1.5 (full Windows
-shell context menu), Phase 2 (real multi-tabs per pane), and
-Phase 3 (folder-background right-click + resizable panes) have
+shell context menu), Phase 2 (real multi-tabs per pane), Phase 3
+(folder-background right-click + resizable panes), and Phase 4
+(Cmd Ctrl+K palette + tab affordances + resize smoothness) have
 shipped. The Workspace direction has been removed (one less skin
 to maintain); the remaining directions are Fluent (A) and Cmd (B).
-The remaining gap is the Ctrl+K palette and sort/view menus.
+The remaining gap is sort/view menus.
 
 ## Shipped
 
@@ -19,6 +20,22 @@ The remaining gap is the Ctrl+K palette and sort/view menus.
   controls, clickable breadcrumbs, Direction B rail navigation, dynamic
   drives section in the Fluent sidebar (real free-space numbers from
   `fs.listDrives()`).
+- **Phase 4 — Cmd palette + tab affordances + resize smoothness.**
+  Direction B's static input is now a real Ctrl+K palette
+  (`src/palette.js`) with three modes inferred from the query:
+  `> …` runs a `doAction` verb; `/`, `\`, or a `<X>:` drive prefix
+  triggers debounced directory autocomplete via `fs.listDir`;
+  anything else searches current-pane entries and recents.
+  `↑ / ↓` move highlight, Enter executes, Esc / outside-click
+  dismisses. Global Ctrl+K focuses the palette only when Cmd is
+  active. `doAction` gained `tabNew` / `tabClose` shims so the
+  palette can dispatch them via the existing `explorer:action`
+  channel. Middle-click on a Fluent tab now closes it
+  (Chrome / VS Code convention); the close × stays the visible
+  affordance. Pane resize now coalesces mousemove updates to one
+  per animation frame and suppresses `.row` pointer events during
+  the drag, eliminating the choppiness that shipped with Phase 3
+  on long file lists.
 - **Phase 3 — folder-background right-click + resizable panes**.
   Right-clicking the empty area of a pane opens a folder-scope menu
   (Open in VS Code · Open in Terminal · New folder · Refresh · Show
@@ -32,7 +49,8 @@ The remaining gap is the Ctrl+K palette and sort/view menus.
   ratio (clamped 0.1 – 0.9), commits to `settings.splits[layoutId]`
   on mouseup, persists under `simple-explorer.state.splits`. Both
   directions now route through `applyLayout` instead of setting
-  `gridTemplateColumns/Rows` themselves.
+  `gridTemplateColumns/Rows` themselves. Live-resize smoothness
+  was tightened up post-merge in Phase 4.
 - **Phase 2 — real multi-tabs per pane**. Each Fluent pane now owns a
   tab list (`pane.tabs`); each tab has its own path, history,
   selection, entries, and filter. `+` opens a new tab at the active
@@ -99,7 +117,6 @@ These render and look right, but clicking them does nothing today:
 | --- | --- | --- |
 | Direction B | Rail icons (Pinned / Recent / Drives) | open popover panels |
 | Direction B | Pane header View / Sort / More | sort dropdown, view-mode menu |
-| Direction B | Ctrl+K command palette | open palette overlay, route input to commands / path nav / fuzzy file search |
 
 ### Not started — explicitly out of MVP scope
 
@@ -359,16 +376,16 @@ persists `panes[].tabs[].path` + `activeTabIdx` under
 bar. Closing the last tab is a no-op (the × is hidden) — coupling
 tab close to layout shrink stays in Phase 6.
 
-### Phase 4 — Direction B command palette (~half day)
+### ~~Phase 4 — Cmd palette + tab affordances + resize smoothness~~ (shipped)
 
-Currently the top input filters rows like the Fluent search. Make it the
-designed Ctrl+K palette:
-
-- Ctrl+K opens an overlay anchored under the input.
-- Three modes: path (typing `/` or a drive letter → directory autocomplete);
-  search (default; filters across known recents + current pane);
-  command (`>` prefix → run a `doAction()` verb).
-- ESC closes; Enter runs.
+Cmd Ctrl+K palette lives in `src/palette.js`; modes (`command`,
+`path`, `search`) are inferred from the query prefix. `app.js`
+gained `tabNew` / `tabClose` `doAction` shims so the palette can
+dispatch tab operations via the existing `explorer:action` channel,
+and a global Ctrl+K binding focuses the palette input when Cmd is
+active. Fluent tabs now close on middle-click. Pane resize
+mousemove updates coalesce to one per animation frame and suppress
+`.row` pointer events during the drag.
 
 ### Phase 5 — Sort + view modes (~1–2 hours)
 

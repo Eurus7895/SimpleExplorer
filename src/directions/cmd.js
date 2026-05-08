@@ -6,6 +6,7 @@ import { iconHTML } from '../icons.js';
 import { renderRows, buildSegPath } from '../pane.js';
 import { RAIL_ITEMS } from '../sidebar-data.js';
 import { applyLayout } from '../layout.js';
+import { openPalette, closePalette } from '../palette.js';
 import * as fs from '../fs.js';
 
 const LAYOUT_OPTS = [
@@ -46,7 +47,7 @@ function topBar(ctx) {
     <button class="iconbtn" data-nav="fwd">${iconHTML('fwd')}</button>
     <div class="b-cmdpalette">
       ${iconHTML('search', 14)}
-      <input data-search placeholder="Go to folder, search, or run a command" value="${ctx.panes[ctx.activePane].filter || ''}" />
+      <input data-palette placeholder="Go to folder, search, or run a command" />
       <kbd>Ctrl K</kbd>
     </div>
     <div class="spacer"></div>
@@ -57,7 +58,7 @@ function topBar(ctx) {
   bindClicks(bar, ctx);
   bindNav(bar, ctx);
   bindLayout(bar, ctx);
-  bindSearch(bar, ctx);
+  bindPalette(bar, ctx);
   return bar;
 }
 
@@ -184,10 +185,25 @@ function bindLayout(scope, ctx) {
     el.addEventListener('click', () => ctx.setLayout(el.dataset.layout)));
 }
 
-function bindSearch(scope, ctx) {
-  const input = scope.querySelector('[data-search]');
+function bindPalette(scope, ctx) {
+  const input = scope.querySelector('[data-palette]');
   if (!input) return;
-  input.addEventListener('input', () => ctx.onFilter(ctx.activePane, input.value));
+  // Open the palette overlay on focus or when something is typed. Closing
+  // is owned by palette.js (Esc / outside-click / Enter).
+  const open = () => openPalette({
+    anchor: input,
+    input,
+    ctx,
+    getPane: () => ctx.panes[ctx.activePane],
+    onClose: () => { input.value = ''; },
+  });
+  input.addEventListener('focus', open);
+  input.addEventListener('input', () => { if (input.value) open(); });
+  // Direction-level Ctrl+K handled here; the global handler in app.js
+  // also calls focus() on this input when active direction is cmd.
+  scope.dataset.paletteAnchor = '1';
+  // Expose the input so app.js's global Ctrl+K handler can find it.
+  input.classList.add('cmd-palette-input');
 }
 
 function el(tag, cls) {
