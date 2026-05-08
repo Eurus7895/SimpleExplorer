@@ -371,17 +371,53 @@ kbd {
 
 .b-body { flex: 1; display: flex; min-height: 0; background: var(--bg); }
 .b-rail {
-  width: 56px; padding: 10px 0;
+  width: 64px; padding: 10px 4px;
   border-right: 1px solid var(--border); background: var(--bg);
-  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  display: flex; flex-direction: column; align-items: stretch; gap: 2px;
 }
 .b-rail__btn {
-  width: 36px; height: 36px; border-radius: 8px; border: none; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 8px 4px; border: none; border-radius: 8px; cursor: pointer;
   background: transparent; color: var(--text-mute);
-  display: inline-flex; align-items: center; justify-content: center;
 }
 .b-rail__btn:hover { background: var(--hover); color: var(--text); }
-.b-rail__btn.on { background: var(--accent-bg); color: var(--accent); }
+.b-rail__btn--active { background: var(--accent-bg); color: var(--accent); }
+.b-rail__btn--active .b-rail__label { font-weight: 600; }
+.b-rail__label {
+  font-size: 10.5px; font-weight: 500; letter-spacing: .1px;
+}
+
+/* Detail panel rendered to the right of the rail when an item is open. */
+.b-rail-panel {
+  width: 200px; padding: 12px 0;
+  background: var(--surface2); border-right: 1px solid var(--border);
+  overflow: auto;
+  display: flex; flex-direction: column;
+}
+.b-rail-panel__title {
+  padding: 0 14px 8px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .6px;
+  color: var(--text-dim); text-transform: uppercase;
+}
+.b-rail-panel__entry {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 12px; margin: 0 6px; border-radius: 6px;
+  font-size: 12px; cursor: pointer;
+}
+.b-rail-panel__entry:hover { background: var(--hover); }
+.b-rail-panel__entry .icn { color: var(--text-mute); flex-shrink: 0; }
+.b-rail-panel__text { flex: 1; min-width: 0; }
+.b-rail-panel__label {
+  color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.b-rail-panel__meta {
+  font-size: 10.5px; color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.b-rail-panel__empty {
+  padding: 16px 14px; color: var(--text-dim); font-size: 12px; text-align: center;
+}
 
 .b-grid { flex: 1; display: grid; padding: 8px; min-height: 0; }
 .b-pane {

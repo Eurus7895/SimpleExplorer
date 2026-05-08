@@ -17,11 +17,16 @@ export const SIDEBAR_FULL = [
   ]},
 ];
 
+// Rail items for Direction B. Each one either:
+//  - Navigates directly (single-target, like Home) when `target` resolves;
+//  - Or opens a 200 px detail panel listing `entries` (Recent / Drives /
+//    Docs / Downloads). The panel content for Recent and Drives is built
+//    dynamically (recents from localStorage, drives from fs.listDrives).
+// Pinned dropped per the design iteration in chat.
 export const RAIL_ITEMS = [
-  { icon: 'home',  label: 'Home',      key: 'home' },
-  { icon: 'star',  label: 'Pinned',    key: 'pinned' },
-  { icon: 'clock', label: 'Recent',    key: 'recent' },
-  { icon: 'down',  label: 'Downloads', key: 'downloads' },
-  { icon: 'doc',   label: 'Docs',      key: 'documents' },
-  { icon: 'drive', label: 'Drives',    key: 'drives' },
+  { id: 'home',      icon: 'home',  label: 'Home',      target: 'home' },
+  { id: 'recent',    icon: 'clock', label: 'Recent',    panel: 'recent' },
+  { id: 'downloads', icon: 'down',  label: 'Downloads', panel: 'downloads' },
+  { id: 'docs',      icon: 'doc',   label: 'Docs',      panel: 'docs' },
+  { id: 'drives',    icon: 'drive', label: 'Drives',    panel: 'drives' },
 ];

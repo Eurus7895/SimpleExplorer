@@ -3,7 +3,7 @@
 // header. Visuals trace explorer-cmd.jsx in the design bundle.
 
 import { iconHTML } from '../icons.js';
-import { renderRows, buildSegPath, selectionSizeLabel } from '../pane.js';
+import { renderRows, buildSegPath, selectionSizeLabel, getRecent } from '../pane.js';
 import { RAIL_ITEMS } from '../sidebar-data.js';
 import { applyLayout } from '../layout.js';
 import { openPalette, closePalette, isPaletteOpen } from '../palette.js';
@@ -25,6 +25,8 @@ export function renderCmd(root, ctx) {
 
   const body = el('div', 'b-body');
   body.appendChild(rail(ctx));
+  const detail = railDetailPanel(ctx);
+  if (detail) body.appendChild(detail);
 
   const grid = el('div', 'b-grid');
   const cards = ctx.panes.slice(0, ctx.layoutDef.panes).map((pane, i) => paneCard(ctx, pane, i));
@@ -63,22 +65,116 @@ function topBar(ctx) {
 }
 
 function rail(ctx) {
+  const open = ctx.cmdRailOpen;
   const r = el('div', 'b-rail');
   RAIL_ITEMS.forEach((it) => {
-    const btn = el('button', 'b-rail__btn');
+    const isOpen = open === it.id;
+    const btn = el('button', 'b-rail__btn' + (isOpen ? ' b-rail__btn--active' : ''));
     btn.title = it.label;
-    btn.innerHTML = iconHTML(it.icon, 16);
-    const target = ctx.railTarget(it.key);
-    if (target) btn.addEventListener('click', () => ctx.onPaneNav(ctx.activePane, target));
-    else btn.disabled = true; // pinned/recent/drives popovers — out of MVP scope
+    btn.innerHTML = `${iconHTML(it.icon, 16)}<span class="b-rail__label">${it.label}</span>`;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (it.target) {
+        // Single-target items navigate immediately and don't open a panel.
+        const path = ctx.railTarget(it.target);
+        if (path) ctx.onPaneNav(ctx.activePane, path);
+        ctx.onCmdRailToggle(null);
+        return;
+      }
+      ctx.onCmdRailToggle(isOpen ? null : it.id);
+    });
     r.appendChild(btn);
   });
   const spacer = el('div', 'spacer');
   r.appendChild(spacer);
   const more = el('button', 'b-rail__btn');
-  more.innerHTML = iconHTML('more');
+  more.innerHTML = `${iconHTML('more', 14)}<span class="b-rail__label">More</span>`;
   r.appendChild(more);
   return r;
+}
+
+// 200 px detail panel that lists the entries inside the open rail
+// category. Each entry's click navigates the active pane. Built fresh
+// on every render — content for `recent` and `drives` reads
+// dynamically from the recents/drives sources.
+function railDetailPanel(ctx) {
+  const open = ctx.cmdRailOpen;
+  if (!open) return null;
+  const item = RAIL_ITEMS.find((x) => x.id === open);
+  if (!item || !item.panel) return null;
+  const entries = railEntries(item.panel, ctx);
+  const panel = el('div', 'b-rail-panel');
+  const head = el('div', 'b-rail-panel__title');
+  head.textContent = item.label;
+  panel.appendChild(head);
+  if (!entries.length) {
+    const empty = el('div', 'b-rail-panel__empty');
+    empty.textContent = 'No items';
+    panel.appendChild(empty);
+    return panel;
+  }
+  entries.forEach((e) => {
+    const row = el('div', 'b-rail-panel__entry');
+    row.innerHTML = `
+      ${iconHTML(e.icon || 'folder', 13)}
+      <div class="b-rail-panel__text">
+        <div class="b-rail-panel__label">${escapeHtml(e.label)}</div>
+        <div class="b-rail-panel__meta">${escapeHtml(e.meta || e.path || '')}</div>
+      </div>
+    `;
+    row.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      ctx.onPaneNav(ctx.activePane, e.path);
+    });
+    panel.appendChild(row);
+  });
+  return panel;
+}
+
+function railEntries(panelKind, ctx) {
+  if (panelKind === 'recent') {
+    return getRecent().map((p) => ({
+      icon: 'clock',
+      label: shortLabel(p),
+      path: p,
+      meta: p,
+    }));
+  }
+  if (panelKind === 'drives') {
+    return ctx.drives.map((d) => ({
+      icon: 'drive',
+      label: d.name,
+      path: d.path,
+      meta: d.free_bytes ? freeLabel(d.free_bytes) + ' free' : d.path,
+    }));
+  }
+  if (panelKind === 'downloads') {
+    const path = ctx.railTarget('downloads');
+    return path ? [{ icon: 'down', label: 'Downloads', path }] : [];
+  }
+  if (panelKind === 'docs') {
+    const out = [];
+    const docs = ctx.railTarget('documents');
+    if (docs) out.push({ icon: 'doc', label: 'Documents', path: docs });
+    return out;
+  }
+  return [];
+}
+
+function shortLabel(p) {
+  const parts = p.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || p;
+}
+
+function freeLabel(bytes) {
+  const gb = bytes / 1073741824;
+  return gb >= 100 ? Math.round(gb) + ' GB' : gb.toFixed(1) + ' GB';
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[c]);
 }
 
 function paneCard(ctx, pane, i) {

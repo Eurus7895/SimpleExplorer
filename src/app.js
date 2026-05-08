@@ -28,6 +28,7 @@ const DEFAULT = {
   themeA: 'light', layoutA: '2v',
   themeB: 'light', layoutB: '2v',
   splits: { ...DEFAULT_SPLITS },
+  cmdRailOpen: 'recent',
 };
 
 const RENDERERS = {
@@ -167,6 +168,8 @@ function render() {
     onTabSwitch: async (i, tabIdx) => { await tabSwitch(panes[i], tabIdx); saveTabs(); render(); },
     onSortChange: (i, sort) => { panes[i].sort = sort; saveTabs(); render(); },
     onViewChange: (i, view) => { panes[i].view = view; saveTabs(); render(); },
+    cmdRailOpen: settings.cmdRailOpen ?? null,
+    onCmdRailToggle: (id) => { settings.cmdRailOpen = id; saveSettings(); render(); },
     onRename: async (i, oldName, newName) => {
       const p = panes[i];
       p.renaming = null;
