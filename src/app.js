@@ -348,7 +348,12 @@ function bindGlobalKeys() {
     else if (e.key === 'Backspace') { goUp(panes[activePane]).then(render); }
     else if (e.altKey && e.key === 'ArrowLeft') { goBack(panes[activePane]).then(render); }
     else if (e.altKey && e.key === 'ArrowRight') { goForward(panes[activePane]).then(render); }
-    else if (e.key === 'Escape') { typeBuf = ''; clearTimeout(typeBufTimer); }
+    else if (e.key === 'Escape') {
+      typeBuf = '';
+      clearTimeout(typeBufTimer);
+      const pane = panes[activePane];
+      if (pane?.selected.size) { pane.selected.clear(); render(); }
+    }
     else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
       // Type-to-jump (Windows Explorer style): printable keys accumulate
       // into a prefix buffer for 750 ms; the active pane jumps to the
