@@ -49,7 +49,7 @@ function topBar(ctx) {
     <button class="iconbtn" data-nav="fwd">${iconHTML('fwd')}</button>
     <div class="b-cmdpalette">
       ${iconHTML('search', 14)}
-      <input data-palette placeholder="Go to folder, search, or run a command" />
+      <input data-palette class="palette-input" placeholder="Go to folder, search, or run a command" />
       <kbd>Ctrl K</kbd>
     </div>
     <div class="spacer"></div>
@@ -318,11 +318,6 @@ function bindPalette(scope, ctx) {
   // Skipping when already open is critical — re-entering openPalette would
   // call closePalette → onClose → clear the input, eating the keystroke.
   input.addEventListener('input', () => { if (input.value && !isPaletteOpen()) open(); });
-  // Direction-level Ctrl+K handled here; the global handler in app.js
-  // also calls focus() on this input when active direction is cmd.
-  scope.dataset.paletteAnchor = '1';
-  // Expose the input so app.js's global Ctrl+K handler can find it.
-  input.classList.add('cmd-palette-input');
 }
 
 const SORT_KEYS = [

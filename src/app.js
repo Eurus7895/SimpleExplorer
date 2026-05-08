@@ -331,42 +331,34 @@ async function doAction(action) {
 function bindGlobalKeys() {
   document.addEventListener('explorer:action', (e) => doAction(e.detail));
   document.addEventListener('keydown', (e) => {
-    // Global Ctrl+K opens the palette in any direction.
-    // Cmd reuses its existing search input (already wired in cmd.js);
-    // Fluent gets a standalone overlay with an embedded input.
+    // Both directions now anchor the palette to a visible input
+    // (`.palette-input`) embedded in their chrome. Ctrl+K focuses it;
+    // Ctrl+L focuses it pre-filled with the active pane's path. The
+    // standalone overlay path is kept as a fallback for environments
+    // where the input isn't in the DOM.
     if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
-      if (settings.direction === 'cmd') {
-        const input = document.querySelector('input.cmd-palette-input');
-        if (input) {
-          e.preventDefault();
-          input.focus();
-          input.select();
-        }
-      } else if (settings.direction === 'fluent') {
-        if (isPaletteOpen()) return;
+      const input = document.querySelector('input.palette-input');
+      if (input) {
         e.preventDefault();
-        openPalette({
-          ctx: paletteCtx,
-          getPane: () => panes[activePane],
-        });
+        input.focus();
+        input.select();
+      } else if (!isPaletteOpen()) {
+        e.preventDefault();
+        openPalette({ ctx: paletteCtx, getPane: () => panes[activePane] });
       }
       return;
     }
-    // Ctrl+L: open the palette pre-filled with the active pane's path
-    // (Explorer's "edit address bar" gesture, mapped to our palette).
     if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L')) {
       const pane = panes[activePane];
       if (!pane) return;
       e.preventDefault();
-      if (settings.direction === 'cmd') {
-        const input = document.querySelector('input.cmd-palette-input');
-        if (input) {
-          input.focus();
-          input.value = pane.path;
-          input.setSelectionRange(pane.path.length, pane.path.length);
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-      } else if (settings.direction === 'fluent') {
+      const input = document.querySelector('input.palette-input');
+      if (input) {
+        input.focus();
+        input.value = pane.path;
+        input.setSelectionRange(pane.path.length, pane.path.length);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      } else {
         openPalette({
           ctx: paletteCtx,
           getPane: () => panes[activePane],

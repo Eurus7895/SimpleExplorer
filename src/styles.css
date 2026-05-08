@@ -225,14 +225,22 @@ kbd {
 .a-layout button.on { background: var(--accent-bg); color: var(--accent); }
 .b-layout button.on { background: var(--accent-bg); color: var(--accent); }
 .c-layout button.on { background: var(--text); color: var(--bg); }
-.a-search {
-  display: inline-flex; align-items: center; gap: 6px;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 4px;
-  padding: 4px 8px; width: 220px; color: var(--text-mute);
+/* Palette input lives in the middle of the command bar — same shape as
+   Cmd's .b-cmdpalette so the two directions feel related. flex:1 +
+   max-width centers it visually between the cmdbtn group on the left
+   and the view/layout pickers on the right. */
+.a-palette {
+  flex: 1; max-width: 560px; margin: 0 12px;
+  display: inline-flex; align-items: center; gap: 10px;
+  height: 30px; padding: 0 12px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text-mute);
 }
-.a-search input {
-  flex: 1; border: none; background: transparent; outline: none; font-size: 12px;
+.a-palette input {
+  flex: 1; border: none; background: transparent; outline: none;
+  font-size: 13px; color: var(--text);
 }
+.a-palette input::placeholder { color: var(--text-mute); }
 
 .a-body { flex: 1; display: flex; min-height: 0; }
 .a-sidebar {

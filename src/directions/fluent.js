@@ -7,6 +7,7 @@ import { iconHTML } from '../icons.js';
 import { renderRows, renderColumnHeader, renderBreadcrumb, getRecent, selectionSizeLabel } from '../pane.js';
 import { SIDEBAR_FULL } from '../sidebar-data.js';
 import { applyLayout } from '../layout.js';
+import { openPalette, isPaletteOpen } from '../palette.js';
 
 const LAYOUT_OPTS = [
   { id: '1',  icn: 'one',       title: 'Single' },
@@ -72,21 +73,20 @@ function commandBar(ctx) {
     <button class="cmdbtn" data-action="delete">${iconHTML('trash', 15)}<span>Delete</span></button>
     <span class="a-sep"></span>
     <button class="cmdbtn" data-action="compare">${iconHTML('compare', 15)}<span>Compare</span></button>
-    <div class="spacer"></div>
+    <div class="a-palette">
+      ${iconHTML('search', 14)}
+      <input data-palette class="palette-input" placeholder="Go to folder, search, or run a command" />
+      <kbd>Ctrl K</kbd>
+    </div>
     ${viewPicker(ctx)}
     <span class="a-sep"></span>
     ${layoutPicker(ctx)}
-    <span class="a-sep"></span>
-    <div class="a-search">
-      ${iconHTML('search', 14)}
-      <input data-search placeholder="Search current folder" value="${ctx.panes[ctx.activePane].filter || ''}" />
-    </div>
   `;
   bindClicks(bar, ctx);
   bindNav(bar, ctx);
   bindLayout(bar, ctx);
   bindView(bar, ctx);
-  bindSearch(bar, ctx);
+  bindPalette(bar, ctx);
   return bar;
 }
 
@@ -279,10 +279,21 @@ function bindLayout(scope, ctx) {
     el.addEventListener('click', () => ctx.setLayout(el.dataset.layout)));
 }
 
-function bindSearch(scope, ctx) {
-  const input = scope.querySelector('[data-search]');
+// Palette anchor — focus opens the overlay below this input. Same shape
+// as Cmd's bindPalette; the global Ctrl+K / Ctrl+L handler in app.js
+// finds the input via the shared `.palette-input` class.
+function bindPalette(scope, ctx) {
+  const input = scope.querySelector('[data-palette]');
   if (!input) return;
-  input.addEventListener('input', () => ctx.onFilter(ctx.activePane, input.value));
+  const open = () => openPalette({
+    anchor: input,
+    input,
+    ctx,
+    getPane: () => ctx.panes[ctx.activePane],
+    onClose: () => { input.value = ''; },
+  });
+  input.addEventListener('focus', () => { if (!isPaletteOpen()) open(); });
+  input.addEventListener('input', () => { if (input.value && !isPaletteOpen()) open(); });
 }
 
 function freeLabelGB(bytes) {
