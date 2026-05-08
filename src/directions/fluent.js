@@ -78,6 +78,7 @@ function commandBar(ctx) {
       <input data-palette class="palette-input" placeholder="Go to folder, search, or run a command" />
       <kbd>Ctrl K</kbd>
     </div>
+    <div class="spacer"></div>
     ${layoutPicker(ctx)}
     <span class="a-sep"></span>
     ${viewPicker(ctx)}
