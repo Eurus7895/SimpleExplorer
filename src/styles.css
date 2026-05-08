@@ -474,6 +474,21 @@ body.is-resizing-col .row, body.is-resizing-row .row { pointer-events: none; }
   border: 1px solid var(--accent); border-radius: 8px;
   font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px;
 }
+/* Embedded input — only rendered when the palette opens without an
+   external anchor input (Fluent direction Ctrl+K). */
+.palette__input {
+  margin: 4px 8px 6px;
+  padding: 6px 10px;
+  height: 32px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text);
+  outline: none;
+}
+.palette__input:focus { border-color: var(--accent); }
+.palette--standalone { max-height: 420px; }
 .palette__list { flex: 1; overflow: auto; padding: 6px; min-height: 0; }
 .palette__row {
   display: flex; align-items: center; gap: 8px;
