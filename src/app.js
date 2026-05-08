@@ -352,6 +352,29 @@ function bindGlobalKeys() {
       }
       return;
     }
+    // Ctrl+L: open the palette pre-filled with the active pane's path
+    // (Explorer's "edit address bar" gesture, mapped to our palette).
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L')) {
+      const pane = panes[activePane];
+      if (!pane) return;
+      e.preventDefault();
+      if (settings.direction === 'cmd') {
+        const input = document.querySelector('input.cmd-palette-input');
+        if (input) {
+          input.focus();
+          input.value = pane.path;
+          input.setSelectionRange(pane.path.length, pane.path.length);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      } else if (settings.direction === 'fluent') {
+        openPalette({
+          ctx: paletteCtx,
+          getPane: () => panes[activePane],
+          initialQuery: pane.path,
+        });
+      }
+      return;
+    }
     const tgt = e.target;
     if (tgt instanceof HTMLInputElement || tgt instanceof HTMLTextAreaElement) return;
     if (e.key === 'F2') doAction('rename');
