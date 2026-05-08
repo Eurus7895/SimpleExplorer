@@ -55,11 +55,13 @@ function topBar(ctx) {
     <div class="spacer"></div>
     ${directionSwitcher(ctx)}
     ${layoutPicker(ctx)}
+    ${viewPicker(ctx)}
     <button class="iconbtn" data-act="theme" title="Toggle theme">${iconHTML(ctx.theme === 'dark' ? 'sun' : 'moon')}</button>
   `;
   bindClicks(bar, ctx);
   bindNav(bar, ctx);
   bindLayout(bar, ctx);
+  bindView(bar, ctx);
   bindPalette(bar, ctx);
   return bar;
 }
@@ -267,6 +269,24 @@ function layoutPicker(ctx) {
   return `<div class="b-layout">${LAYOUT_OPTS.map((o) => `
     <button data-layout="${o.id}" class="${ctx.layout === o.id ? 'on' : ''}">${iconHTML(o.icn, 13)}</button>
   `).join('')}</div>`;
+}
+
+const VIEW_OPTS = [
+  { id: 'details', icn: 'view-details', title: 'Details' },
+  { id: 'compact', icn: 'view-compact', title: 'Compact' },
+  { id: 'tiles',   icn: 'view-tiles',   title: 'Tiles' },
+];
+
+function viewPicker(ctx) {
+  const view = ctx.panes[ctx.activePane].view || 'details';
+  return `<div class="b-view">${VIEW_OPTS.map((o) => `
+    <button data-view="${o.id}" title="${o.title}" class="${view === o.id ? 'on' : ''}">${iconHTML(o.icn, 13)}</button>
+  `).join('')}</div>`;
+}
+
+function bindView(scope, ctx) {
+  scope.querySelectorAll('[data-view]').forEach((el) =>
+    el.addEventListener('click', () => ctx.onViewChange(ctx.activePane, el.dataset.view)));
 }
 
 function directionSwitcher(ctx) {

@@ -585,17 +585,17 @@ body.is-resizing-col .row, body.is-resizing-row .row { pointer-events: none; }
 .rows--tiles .row__kind { display: none; }
 
 /* Fluent View chooser — same shape as the layout picker. */
-.a-view {
+.a-view, .b-view {
   display: inline-flex; align-items: center; gap: 2px;
   padding: 2px; background: var(--surface2); border: 1px solid var(--border-soft);
   border-radius: 5px;
 }
-.a-view button {
+.a-view button, .b-view button {
   height: 22px; width: 26px; display: inline-flex; align-items: center; justify-content: center;
   background: transparent; border: none; border-radius: 4px; cursor: pointer;
   color: var(--text-mute);
 }
-.a-view button.on { background: var(--accent-bg); color: var(--accent); }
+.a-view button.on, .b-view button.on { background: var(--accent-bg); color: var(--accent); }
 
 /* Generic popover (Cmd Sort + View). Positioned fixed by openPopover(). */
 .popover {
