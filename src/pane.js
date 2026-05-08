@@ -9,7 +9,10 @@ import * as fs from './fs.js';
 const RECENT_KEY = 'simple-explorer.recent';
 const MAX_RECENT = 12;
 
-export function createTabState(initialPath) {
+export const DEFAULT_SORT = { key: 'name', dir: 'asc' };
+export const DEFAULT_VIEW = 'details';
+
+export function createTabState(initialPath, init = {}) {
   return {
     path: initialPath,
     history: [initialPath],
@@ -18,6 +21,8 @@ export function createTabState(initialPath) {
     entries: [],
     loading: false,
     filter: '',
+    sort: init.sort ? { ...init.sort } : { ...DEFAULT_SORT },
+    view: init.view || DEFAULT_VIEW,
   };
 }
 
@@ -25,16 +30,21 @@ export function createTabState(initialPath) {
 // existing nav/render code keeps reading state.path / state.entries directly;
 // syncActiveTab() copies them back into pane.tabs[activeTabIdx] after each
 // mutation so a tab's history survives a switch-away-and-back.
-export function createPaneState(id, initialPath, tabPaths, activeTabIdx = 0) {
-  const seeds = tabPaths && tabPaths.length ? tabPaths : [initialPath];
-  const tabs = seeds.map((p) => createTabState(p));
+// `seeds` accepts either an array of paths (legacy shape) or an array of
+// { path, sort?, view? } snapshots so persistence can rehydrate sort/view.
+export function createPaneState(id, initialPath, seeds, activeTabIdx = 0) {
+  const list = (seeds && seeds.length) ? seeds : [initialPath];
+  const tabs = list.map((s) => {
+    if (typeof s === 'string') return createTabState(s);
+    return createTabState(s.path, { sort: s.sort, view: s.view });
+  });
   const idx = Math.min(Math.max(0, activeTabIdx), tabs.length - 1);
   const pane = { id, tabs, activeTabIdx: idx };
   hydrateFromTab(pane, tabs[idx]);
   return pane;
 }
 
-const TAB_FIELDS = ['path', 'history', 'historyIdx', 'selected', 'entries', 'loading', 'filter'];
+const TAB_FIELDS = ['path', 'history', 'historyIdx', 'selected', 'entries', 'loading', 'filter', 'sort', 'view'];
 
 function hydrateFromTab(pane, tab) {
   for (const k of TAB_FIELDS) pane[k] = tab[k];
@@ -47,12 +57,19 @@ function syncActiveTab(pane) {
 }
 
 export function tabSnapshot(pane) {
-  return pane.tabs.map((t) => t.path);
+  return pane.tabs.map((t) => ({
+    path: t.path,
+    sort: t.sort ? { ...t.sort } : { ...DEFAULT_SORT },
+    view: t.view || DEFAULT_VIEW,
+  }));
 }
 
 export async function tabNew(pane, path) {
   syncActiveTab(pane);
-  const tab = createTabState(path);
+  // Inherit the active tab's sort + view so a new tab in the same pane
+  // doesn't surprise the user with a different ordering.
+  const seed = pane.tabs[pane.activeTabIdx];
+  const tab = createTabState(path, { sort: seed?.sort, view: seed?.view });
   pane.tabs.push(tab);
   pane.activeTabIdx = pane.tabs.length - 1;
   hydrateFromTab(pane, tab);
@@ -161,6 +178,11 @@ export function renderRows(state, opts = {}) {
   list.className = 'rows';
   if (density === 'cmd') list.classList.add('rows--cmd');
   if (density === 'ws') list.classList.add('rows--ws');
+  // View-mode class drives row layout (default details / compact / tiles).
+  // `details` is the default — no class needed; the others tweak grid + padding.
+  const view = state.view || DEFAULT_VIEW;
+  if (view === 'compact') list.classList.add('rows--compact');
+  else if (view === 'tiles') list.classList.add('rows--tiles');
 
   items.forEach((it) => {
     const row = document.createElement('div');
@@ -248,21 +270,67 @@ export function renderRows(state, opts = {}) {
 }
 
 export function filtered(state) {
-  if (!state.filter) return state.entries;
+  const sorted = sortedEntries(state);
+  if (!state.filter) return sorted;
   const q = state.filter.toLowerCase();
-  return state.entries.filter((e) => e.name.toLowerCase().includes(q));
+  return sorted.filter((e) => e.name.toLowerCase().includes(q));
 }
 
-export function renderColumnHeader(direction) {
+// Folders cluster first; within each group entries sort by the active key.
+// `name` is case-insensitive locale-aware; `size` and `modified` are
+// numeric; `type` falls back to the same name comparator within a type.
+export function sortedEntries(state) {
+  const sort = state.sort || DEFAULT_SORT;
+  const dirSign = sort.dir === 'desc' ? -1 : 1;
+  const cmp = COMPARATORS[sort.key] || COMPARATORS.name;
+  return [...state.entries].sort((a, b) => {
+    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+    return dirSign * cmp(a, b);
+  });
+}
+
+const NAME_CMP = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+const COMPARATORS = {
+  name:     NAME_CMP,
+  size:     (a, b) => (a.size || 0) - (b.size || 0) || NAME_CMP(a, b),
+  modified: (a, b) => (a.modified_ms || 0) - (b.modified_ms || 0) || NAME_CMP(a, b),
+  type:     (a, b) => {
+    const ta = a.is_dir ? '' : (a.extension || '').toLowerCase();
+    const tb = b.is_dir ? '' : (b.extension || '').toLowerCase();
+    if (ta !== tb) return ta < tb ? -1 : 1;
+    return NAME_CMP(a, b);
+  },
+};
+
+export function renderColumnHeader(direction, opts = {}) {
+  const { sort = DEFAULT_SORT, onSort } = opts;
   const head = document.createElement('div');
   head.className = 'cols';
   if (direction === 'ws') head.classList.add('cols--ws');
-  head.innerHTML = `
-    <span>Name <span class="icn">${iconHTML('sort', 10)}</span></span>
-    <span>Size</span>
-    <span>Modified</span>
-    <span>Type</span>
-  `;
+  const cells = [
+    { key: 'name', label: 'Name' },
+    { key: 'size', label: 'Size' },
+    { key: 'modified', label: 'Modified' },
+    { key: 'type', label: 'Type' },
+  ];
+  cells.forEach((c) => {
+    const span = document.createElement('span');
+    span.className = 'cols__seg';
+    span.dataset.sortKey = c.key;
+    if (c.key === sort.key) span.classList.add('cols__seg--active');
+    const arrow = c.key === sort.key
+      ? `<span class="cols__arrow">${sort.dir === 'desc' ? '↓' : '↑'}</span>`
+      : '';
+    span.innerHTML = `${c.label}${arrow}`;
+    if (onSort) {
+      span.style.cursor = 'pointer';
+      span.addEventListener('click', () => {
+        if (sort.key === c.key) onSort({ key: c.key, dir: sort.dir === 'asc' ? 'desc' : 'asc' });
+        else onSort({ key: c.key, dir: 'asc' });
+      });
+    }
+    head.appendChild(span);
+  });
   return head;
 }
 

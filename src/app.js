@@ -7,6 +7,7 @@ import { createPaneState, navigate, goBack, goForward, goUp, loadPath, tabNew, t
 import { renderFluent } from './directions/fluent.js';
 import { renderCmd } from './directions/cmd.js';
 import { LAYOUT_DEFS, DEFAULT_SPLITS } from './layout.js';
+import { openPalette, isPaletteOpen } from './palette.js';
 
 // Boot the Neutralino client. Safe to call before DOM ready; APIs queue until
 // the runtime handshake completes. No-op when running directly in a browser
@@ -39,6 +40,16 @@ let panes = [];
 let activePane = 0;
 let homePath = '~';
 let drives = [];
+
+// Stable adapter for the palette so the global Ctrl+K handler doesn't
+// have to chase the per-render ctx. Getters resolve at call time so
+// `panes` / `activePane` reassignment doesn't strand the palette.
+const paletteCtx = {
+  get activePane() { return activePane; },
+  get panes() { return panes; },
+  onPaneNav: async (i, path) => { await navigate(panes[i], path); saveTabs(); render(); },
+  onActivateEntry: (i, entry) => handleActivate(i, entry),
+};
 
 async function init() {
   homePath = (await fs.homeDir()) || '~';
@@ -154,6 +165,8 @@ function render() {
     onTabNew: async (i) => { await tabNew(panes[i], panes[i].path); saveTabs(); render(); },
     onTabClose: async (i, tabIdx) => { if (await tabClose(panes[i], tabIdx)) { saveTabs(); render(); } },
     onTabSwitch: async (i, tabIdx) => { await tabSwitch(panes[i], tabIdx); saveTabs(); render(); },
+    onSortChange: (i, sort) => { panes[i].sort = sort; saveTabs(); render(); },
+    onViewChange: (i, view) => { panes[i].view = view; saveTabs(); render(); },
     onAction: (action) => doAction(action),
     rerender: render,
   };
@@ -305,7 +318,9 @@ async function doAction(action) {
 function bindGlobalKeys() {
   document.addEventListener('explorer:action', (e) => doAction(e.detail));
   document.addEventListener('keydown', (e) => {
-    // Global Ctrl+K opens the Cmd-direction palette regardless of focus.
+    // Global Ctrl+K opens the palette in any direction.
+    // Cmd reuses its existing search input (already wired in cmd.js);
+    // Fluent gets a standalone overlay with an embedded input.
     if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
       if (settings.direction === 'cmd') {
         const input = document.querySelector('input.cmd-palette-input');
@@ -314,6 +329,13 @@ function bindGlobalKeys() {
           input.focus();
           input.select();
         }
+      } else if (settings.direction === 'fluent') {
+        if (isPaletteOpen()) return;
+        e.preventDefault();
+        openPalette({
+          ctx: paletteCtx,
+          getPane: () => panes[activePane],
+        });
       }
       return;
     }

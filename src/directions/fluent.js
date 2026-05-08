@@ -73,6 +73,8 @@ function commandBar(ctx) {
     <span class="a-sep"></span>
     <button class="cmdbtn" data-action="compare">${iconHTML('compare', 15)}<span>Compare</span></button>
     <div class="spacer"></div>
+    ${viewPicker(ctx)}
+    <span class="a-sep"></span>
     ${layoutPicker(ctx)}
     <span class="a-sep"></span>
     <div class="a-search">
@@ -83,6 +85,7 @@ function commandBar(ctx) {
   bindClicks(bar, ctx);
   bindNav(bar, ctx);
   bindLayout(bar, ctx);
+  bindView(bar, ctx);
   bindSearch(bar, ctx);
   return bar;
 }
@@ -142,8 +145,14 @@ function paneCard(ctx, pane, i) {
   crumbBar.appendChild(renderBreadcrumb(pane.path, (p) => ctx.onPaneNav(i, p)));
   card.appendChild(crumbBar);
 
-  const head = renderColumnHeader('a');
-  card.appendChild(head);
+  // Hide column header in tiles view — there are no columns to label.
+  if (pane.view !== 'tiles') {
+    const head = renderColumnHeader('a', {
+      sort: pane.sort,
+      onSort: (next) => ctx.onSortChange(i, next),
+    });
+    card.appendChild(head);
+  }
 
   const rows = renderRows(pane, {
     onActivate: (entry) => ctx.onActivateEntry(i, entry),
@@ -243,6 +252,24 @@ function bindNav(scope, ctx) {
     else if (el.dataset.nav === 'fwd') ctx.onPaneForward(ctx.activePane);
     else if (el.dataset.nav === 'up') ctx.onPaneUp(ctx.activePane);
   }));
+}
+
+const VIEW_OPTS = [
+  { id: 'details', icn: 'list',     title: 'Details' },
+  { id: 'compact', icn: 'sidebar',  title: 'Compact' },
+  { id: 'tiles',   icn: 'grid4',    title: 'Tiles' },
+];
+
+function viewPicker(ctx) {
+  const view = ctx.panes[ctx.activePane].view || 'details';
+  return `<div class="a-view">${VIEW_OPTS.map((o) => `
+    <button data-view="${o.id}" title="${o.title}" class="${view === o.id ? 'on' : ''}">${iconHTML(o.icn, 14)}</button>
+  `).join('')}</div>`;
+}
+
+function bindView(scope, ctx) {
+  scope.querySelectorAll('[data-view]').forEach((el) =>
+    el.addEventListener('click', () => ctx.onViewChange(ctx.activePane, el.dataset.view)));
 }
 
 function bindLayout(scope, ctx) {

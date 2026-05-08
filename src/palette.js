@@ -51,25 +51,49 @@ export function closePalette() {
   active = null;
 }
 
+// Two opening modes:
+//   - external input (Cmd direction): caller passes `input`, we attach
+//     listeners to it; the existing search field doubles as the palette
+//     input, the overlay is anchored under it.
+//   - embedded input (Fluent direction): no `input` passed; we render
+//     and focus our own. Without an `anchor`, the overlay is centered
+//     near the top of the viewport like Spotlight / VS Code's palette.
 export function openPalette({ anchor, input, ctx, getPane, onClose }) {
   closePalette();
 
   const overlay = document.createElement('div');
   overlay.className = 'palette';
-  positionUnder(overlay, anchor);
-  document.body.appendChild(overlay);
 
   const modeChip = document.createElement('div');
   modeChip.className = 'palette__mode';
   overlay.appendChild(modeChip);
 
+  let useInput = input;
+  const ownsInput = !useInput;
+  if (ownsInput) {
+    useInput = document.createElement('input');
+    useInput.className = 'palette__input';
+    useInput.placeholder = 'Go to folder, search, or run a command';
+    useInput.spellcheck = false;
+    overlay.appendChild(useInput);
+    overlay.classList.add('palette--standalone');
+  }
+
   const list = document.createElement('div');
   list.className = 'palette__list';
   overlay.appendChild(list);
 
+  document.body.appendChild(overlay);
+  if (anchor) positionUnder(overlay, anchor);
+  else positionFloat(overlay);
+
+  if (ownsInput) setTimeout(() => useInput.focus(), 0);
+
   const state = {
     overlay,
-    input,
+    anchor,
+    input: useInput,
+    ownsInput,
     list,
     modeChip,
     items: [],
@@ -82,7 +106,7 @@ export function openPalette({ anchor, input, ctx, getPane, onClose }) {
   };
 
   const refresh = async () => {
-    const q = input.value;
+    const q = useInput.value;
     const parsed = parseMode(q);
     state.modeChip.textContent = parsed.mode;
     state.modeChip.dataset.mode = parsed.mode;
@@ -124,12 +148,13 @@ export function openPalette({ anchor, input, ctx, getPane, onClose }) {
     }
   };
   state.onOutside = (e) => {
-    if (overlay.contains(e.target) || anchor.contains(e.target)) return;
+    if (overlay.contains(e.target)) return;
+    if (anchor && anchor.contains(e.target)) return;
     closePalette();
   };
 
-  input.addEventListener('input', state.onInput);
-  input.addEventListener('keydown', state.onKey);
+  useInput.addEventListener('input', state.onInput);
+  useInput.addEventListener('keydown', state.onKey);
   // Capture-phase outside-click so the listener runs before any pane
   // mousedown rebinds focus.
   setTimeout(() => document.addEventListener('mousedown', state.onOutside, true), 0);
@@ -278,6 +303,16 @@ function positionUnder(overlay, anchor) {
   overlay.style.left = r.left + 'px';
   overlay.style.top = (r.bottom + 4) + 'px';
   overlay.style.width = r.width + 'px';
+}
+
+// Standalone (Fluent) palette: centered horizontally near the top of
+// the viewport, fixed width — Spotlight / VS Code shape.
+function positionFloat(overlay) {
+  overlay.style.position = 'fixed';
+  overlay.style.left = '50%';
+  overlay.style.top = '15%';
+  overlay.style.transform = 'translateX(-50%)';
+  overlay.style.width = '520px';
 }
 
 function escapeHtml(s) {
