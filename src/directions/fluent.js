@@ -45,6 +45,8 @@ function titleBar(ctx) {
       SimpleExplorer
     </div>
     <div class="spacer"></div>
+    ${viewPicker(ctx)}
+    <span class="a-sep"></span>
     ${directionSwitcher(ctx)}
     <button class="iconbtn" data-act="theme" title="Toggle theme">
       ${iconHTML(ctx.theme === 'dark' ? 'sun' : 'moon')}
@@ -57,6 +59,7 @@ function titleBar(ctx) {
   `;
   bindClicks(bar, ctx);
   bindWinCtl(bar, ctx);
+  bindView(bar, ctx);
   return bar;
 }
 
@@ -79,13 +82,10 @@ function commandBar(ctx) {
       <kbd>Ctrl K</kbd>
     </div>
     ${layoutPicker(ctx)}
-    <span class="a-sep"></span>
-    ${viewPicker(ctx)}
   `;
   bindClicks(bar, ctx);
   bindNav(bar, ctx);
   bindLayout(bar, ctx);
-  bindView(bar, ctx);
   bindPalette(bar, ctx);
   return bar;
 }
