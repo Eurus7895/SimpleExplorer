@@ -155,7 +155,7 @@ export function getRecent() {
 // ── Renderers ──────────────────────────────────────────────────────────
 
 export function renderRows(state, opts = {}) {
-  const { onActivate, density = 'normal', accent } = opts;
+  const { onActivate, onPaneActivate, density = 'normal', accent } = opts;
   const items = filtered(state);
   const list = document.createElement('div');
   list.className = 'rows';
@@ -210,6 +210,7 @@ export function renderRows(state, opts = {}) {
 
     row.addEventListener('contextmenu', (e) => {
       e.preventDefault();
+      onPaneActivate?.();
       if (!state.selected.has(it.name)) {
         state.selected.clear();
         state.selected.add(it.name);
@@ -230,6 +231,18 @@ export function renderRows(state, opts = {}) {
     empty.textContent = state.filter ? 'No matches' : (state.loading ? 'Loading…' : 'Empty');
     list.appendChild(empty);
   }
+
+  // Folder-scope contextmenu — fires only when the user clicks the rows
+  // container itself or the empty placeholder, never when bubbling up
+  // from a row (rows have their own handler that prevents default).
+  list.addEventListener('contextmenu', (e) => {
+    if (e.target !== list && !(e.target instanceof Element && e.target.classList.contains('rows__empty'))) return;
+    e.preventDefault();
+    onPaneActivate?.();
+    state.selected.clear();
+    list.querySelectorAll('.row').forEach((r) => r.classList.remove('row--sel'));
+    showFolderContextMenu(e.clientX, e.clientY, state);
+  });
 
   return list;
 }
@@ -310,6 +323,18 @@ const CURATED_ITEMS = [
   { label: 'Properties',        act: 'properties' },
 ];
 
+// Folder-scope items (right-click on the empty area of a pane). All
+// target the folder itself via doAction with selection cleared.
+const FOLDER_ITEMS = [
+  { label: 'Open in VS Code',   act: 'vscode' },
+  { label: 'Open in Terminal',  act: 'terminal' },
+  { label: 'New folder',        act: 'newfolder' },
+  { label: 'Refresh',           act: 'refresh' },
+  null,
+  { label: 'Show in Explorer',  act: 'reveal' },
+  { label: 'Properties',        act: 'properties' },
+];
+
 // 3-second TTL cache so repeat right-clicks of the same selection don't
 // re-walk COM. Keyed by paths.join('\\0').
 const SHELL_MENU_CACHE = new Map();
@@ -358,6 +383,64 @@ function showContextMenu(x, y, entry, paths) {
     fillShellSection(menu, sep, loading, json, paths);
   }).catch(() => {
     fillShellSection(menu, sep, loading, null, paths);
+  });
+}
+
+// Folder-scope right-click menu. Curated folder items (which all act on
+// the active pane's path) followed by the OS shell extensions resolved
+// against [pane.path] — that's where Git Bash / 7-Zip / Send to / etc.
+// land for the folder itself.
+function showFolderContextMenu(x, y, pane) {
+  dismissAllMenus();
+
+  const menu = createMenuEl();
+  buildFolderCurated(menu);
+
+  const sep = document.createElement('div');
+  sep.className = 'ctx-menu__sep';
+  menu.appendChild(sep);
+  const loading = document.createElement('div');
+  loading.className = 'ctx-menu__item ctx-menu__item--loading';
+  loading.innerHTML = '<span>Loading shell extensions…</span>';
+  menu.appendChild(loading);
+
+  document.body.appendChild(menu);
+  positionAt(menu, x, y);
+  openMenus.push(menu);
+  attachDismiss();
+
+  const paths = [pane.path];
+  const key = paths.join('\0');
+  const cached = SHELL_MENU_CACHE.get(key);
+  if (cached && Date.now() - cached.ts < SHELL_MENU_TTL_MS) {
+    fillShellSection(menu, sep, loading, cached.json, paths);
+    return;
+  }
+  fs.helperMenu(paths).then((json) => {
+    if (!menu.isConnected) return;
+    if (json) SHELL_MENU_CACHE.set(key, { ts: Date.now(), json });
+    fillShellSection(menu, sep, loading, json, paths);
+  }).catch(() => {
+    fillShellSection(menu, sep, loading, null, paths);
+  });
+}
+
+function buildFolderCurated(menu) {
+  FOLDER_ITEMS.forEach((it) => {
+    if (!it) {
+      const sep = document.createElement('div');
+      sep.className = 'ctx-menu__sep';
+      menu.appendChild(sep);
+      return;
+    }
+    const row = document.createElement('div');
+    row.className = 'ctx-menu__item';
+    row.innerHTML = `<span>${escapeHtml(it.label)}</span>`;
+    row.addEventListener('click', () => {
+      dismissAllMenus();
+      document.dispatchEvent(new CustomEvent('explorer:action', { detail: it.act }));
+    });
+    menu.appendChild(row);
   });
 }
 

@@ -6,6 +6,7 @@ import * as fs from './fs.js';
 import { createPaneState, navigate, goBack, goForward, goUp, loadPath, tabNew, tabClose, tabSwitch, tabSnapshot } from './pane.js';
 import { renderFluent } from './directions/fluent.js';
 import { renderCmd } from './directions/cmd.js';
+import { LAYOUT_DEFS, DEFAULT_SPLITS } from './layout.js';
 
 // Boot the Neutralino client. Safe to call before DOM ready; APIs queue until
 // the runtime handshake completes. No-op when running directly in a browser
@@ -25,19 +26,12 @@ const DEFAULT = {
   direction: 'fluent',
   themeA: 'light', layoutA: '2v',
   themeB: 'light', layoutB: '2v',
+  splits: { ...DEFAULT_SPLITS },
 };
 
 const RENDERERS = {
   fluent: { fn: renderFluent, themeKey: 'themeA', layoutKey: 'layoutA' },
   cmd:    { fn: renderCmd,    themeKey: 'themeB', layoutKey: 'layoutB' },
-};
-
-const LAYOUTS = {
-  '1':  { panes: 1, cols: '1fr',     rows: '1fr',     thirdSpansFull: false },
-  '2v': { panes: 2, cols: '1fr 1fr', rows: '1fr',     thirdSpansFull: false },
-  '2h': { panes: 2, cols: '1fr',     rows: '1fr 1fr', thirdSpansFull: false },
-  '3':  { panes: 3, cols: '1fr 1fr', rows: '1fr 1fr', thirdSpansFull: true  },
-  '4':  { panes: 4, cols: '1fr 1fr', rows: '1fr 1fr', thirdSpansFull: false },
 };
 
 const settings = loadSettings();
@@ -99,17 +93,24 @@ function render() {
   const root = document.getElementById('root');
   root.innerHTML = '';
   const dir = RENDERERS[settings.direction];
+  const layoutId = settings[dir.layoutKey];
   const ctx = {
     direction: settings.direction,
     theme: settings[dir.themeKey],
-    layout: settings[dir.layoutKey],
-    layoutDef: LAYOUTS[settings[dir.layoutKey]] || LAYOUTS['2v'],
+    layout: layoutId,
+    layoutDef: LAYOUT_DEFS[layoutId] || LAYOUT_DEFS['2v'],
+    splits: settings.splits[layoutId] || { ...(DEFAULT_SPLITS[layoutId] || {}) },
     panes,
     activePane,
     home: homePath,
     drives,
     quickAccessPath,
     railTarget,
+    onSplitChange(next) {
+      settings.splits[layoutId] = next;
+      saveSettings();
+      render();
+    },
     async onWinCtl(kind) {
       const N = window.Neutralino; if (!N) return;
       // Each call wrapped individually — Neutralino 5.6.0 with the default
@@ -217,6 +218,12 @@ async function doAction(action) {
     case 'reveal': {
       const sel = [...pane.selected][0];
       if (sel) await fs.revealInOS(fs.joinPath(pane.path, sel));
+      else await fs.openInOS(pane.path);
+      break;
+    }
+    case 'refresh': {
+      await safeLoad(pane);
+      render();
       break;
     }
     case 'openSelected': {
@@ -331,12 +338,12 @@ function typeJump(prefix) {
 function loadSettings() {
   try {
     const raw = JSON.parse(localStorage.getItem(STATE_KEY) || '{}');
-    const merged = { ...DEFAULT, ...raw };
+    const merged = { ...DEFAULT, ...raw, splits: { ...DEFAULT_SPLITS, ...(raw.splits || {}) } };
     // Migrate users who had the now-removed Workspace direction selected.
     if (!RENDERERS[merged.direction]) merged.direction = 'fluent';
     return merged;
   } catch {
-    return { ...DEFAULT };
+    return { ...DEFAULT, splits: { ...DEFAULT_SPLITS } };
   }
 }
 
