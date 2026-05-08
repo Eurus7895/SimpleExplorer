@@ -286,12 +286,37 @@ async function doAction(action) {
       render();
       break;
     }
+    case 'tabNew': {
+      await tabNew(pane, pane.path);
+      saveTabs();
+      render();
+      break;
+    }
+    case 'tabClose': {
+      if (await tabClose(pane, pane.activeTabIdx)) {
+        saveTabs();
+        render();
+      }
+      break;
+    }
   }
 }
 
 function bindGlobalKeys() {
   document.addEventListener('explorer:action', (e) => doAction(e.detail));
   document.addEventListener('keydown', (e) => {
+    // Global Ctrl+K opens the Cmd-direction palette regardless of focus.
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+      if (settings.direction === 'cmd') {
+        const input = document.querySelector('input.cmd-palette-input');
+        if (input) {
+          e.preventDefault();
+          input.focus();
+          input.select();
+        }
+      }
+      return;
+    }
     const tgt = e.target;
     if (tgt instanceof HTMLInputElement || tgt instanceof HTMLTextAreaElement) return;
     if (e.key === 'F2') doAction('rename');
