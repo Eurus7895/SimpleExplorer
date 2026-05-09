@@ -1,0 +1,60 @@
+name: Build shellhelp.exe
+
+# Compiles tools/shellhelp.cpp on a Windows runner so contributors don't
+# need MSVC on their own machine. Uploaded as a workflow artifact named
+# `shellhelp` -- pull it down with:
+#
+#   gh run download --name shellhelp --dir extras/
+#
+# from the repo root, then commit `extras/shellhelp.exe` if the rebuild
+# is intentional. The exe is intentionally tracked in git so end users
+# never need a compiler (per tools/build.md).
+
+on:
+  push:
+    paths:
+      - 'tools/shellhelp.cpp'
+      - 'tools/build.md'
+      - '.github/workflows/build-shellhelp.yml'
+  pull_request:
+    paths:
+      - 'tools/shellhelp.cpp'
+      - 'tools/build.md'
+      - '.github/workflows/build-shellhelp.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ilammy/msvc-dev-cmd puts cl.exe + the Windows SDK headers/libs on
+      # PATH for subsequent steps -- equivalent to launching a "Developer
+      # Command Prompt for VS" locally.
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Compile shellhelp.cpp
+        working-directory: tools
+        shell: cmd
+        run: |
+          cl /nologo /EHsc /O2 /utf-8 shellhelp.cpp ^
+             /link shell32.lib ole32.lib user32.lib gdi32.lib windowscodecs.lib
+
+      - name: Stage binary into extras/
+        shell: bash
+        run: |
+          mkdir -p extras
+          mv tools/shellhelp.exe extras/shellhelp.exe
+          ls -la extras/shellhelp.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shellhelp
+          path: extras/shellhelp.exe
+          if-no-files-found: error
+          retention-days: 30
