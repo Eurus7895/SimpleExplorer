@@ -425,17 +425,24 @@ export async function revealInOS(path) {
 // ── Curated context-menu actions (new vs Tauri version) ─────────────────────
 
 // Show the real Windows Properties dialog. Prefers the native helper
-// (~50 ms via ShellExecuteEx + "properties" verb); falls back to a
-// PowerShell + Shell.Application COM call when the helper hasn't been
-// built yet (~250-400 ms).
+// (~50 ms via ShellExecuteEx + "properties" verb); falls back to
+// `Start-Process -Verb Properties` when the helper hasn't been built
+// yet (~250-400 ms). The earlier `Shell.Application.InvokeVerb`
+// fallback was modeless and got torn down when PowerShell exited a
+// beat later -- the dialog flickered and disappeared. Start-Process
+// hands the verb to ShellExecuteEx, which gives the dialog the OS
+// shell as parent, so it persists after PowerShell returns.
 export async function showProperties(path) {
   if (!N) { console.warn('[mock] properties', path); return; }
   if (await helperAvailable()) {
     await N.os.execCommand(`"${HELPER_PATH}" properties "${path}"`, { background: true });
     return;
   }
-  const ps = `$s = New-Object -ComObject Shell.Application; $i = $s.NameSpace((Split-Path ${psQuote(path)} -Parent)).ParseName((Split-Path ${psQuote(path)} -Leaf)); $i.InvokeVerb('Properties')`;
-  await execBg(`powershell -NoProfile -Command "${ps.replace(/"/g, '\\"')}"`);
+  // Single-quoted PS string preserves backslashes; escape any embedded
+  // single quotes by doubling them per PS lexical rules.
+  const psPath = path.replace(/'/g, "''");
+  const ps = `Start-Process -FilePath '${psPath}' -Verb Properties`;
+  await execBg(`powershell -NoProfile -WindowStyle Hidden -Command "${ps.replace(/"/g, '\\"')}"`);
 }
 
 export async function openInVSCode(path) {
