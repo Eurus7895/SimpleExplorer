@@ -8,6 +8,7 @@ import { renderRows, renderColumnHeader, renderBreadcrumb, getRecent, selectionS
 import { SIDEBAR_FULL } from '../sidebar-data.js';
 import { applyLayout } from '../layout.js';
 import { openPalette, isPaletteOpen } from '../palette.js';
+import { ensurePreviewPanel, bindPreviewClose, showPreviewFor } from '../preview.js';
 
 const LAYOUT_OPTS = [
   { id: '1',  icn: 'one',       title: 'Single' },
@@ -32,6 +33,13 @@ export function renderFluent(root, ctx) {
   applyLayout(grid, ctx.layout, ctx.splits, cards, ctx.onSplitChange);
 
   body.appendChild(grid);
+  if (ctx.previewOpen) {
+    const previewWrap = el('div', 'a-preview-wrap');
+    ensurePreviewPanel(previewWrap);
+    bindPreviewClose(() => ctx.onPreviewToggle());
+    body.appendChild(previewWrap);
+    queueMicrotask(() => ctx.pushPreview?.(ctx.activePane));
+  }
   app.appendChild(body);
   app.appendChild(statusBar(ctx));
   root.appendChild(app);
@@ -88,6 +96,7 @@ function commandBar(ctx) {
       <kbd>Ctrl K</kbd>
     </div>
     <div class="spacer"></div>
+    <button class="iconbtn ${ctx.previewOpen ? 'on' : ''}" data-act="previewToggle" title="Toggle preview pane (Ctrl+P)">${iconHTML('eye', 14)}</button>
     ${layoutPicker(ctx)}
     <span class="a-sep"></span>
     ${viewPicker(ctx)}

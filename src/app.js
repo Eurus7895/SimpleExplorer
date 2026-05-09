@@ -9,6 +9,7 @@ import { renderCmd } from './directions/cmd.js';
 import { LAYOUT_DEFS, DEFAULT_SPLITS } from './layout.js';
 import { openPalette, isPaletteOpen } from './palette.js';
 import { recursiveSearch } from './search.js';
+import { ensurePreviewPanel, bindPreviewClose, showPreviewFor } from './preview.js';
 
 // Boot the Neutralino client. Safe to call before DOM ready; APIs queue until
 // the runtime handshake completes. No-op when running directly in a browser
@@ -58,6 +59,7 @@ const DEFAULT = {
   themeB: 'light', layoutB: '2v',
   splits: { ...DEFAULT_SPLITS },
   cmdRailOpen: 'recent',
+  previewOpen: false,
 };
 
 const RENDERERS = {
@@ -213,6 +215,9 @@ function render() {
     onViewChange: (i, view) => { panes[i].view = view; saveTabs(); render(); },
     cmdRailOpen: settings.cmdRailOpen ?? null,
     onCmdRailToggle: (id) => { settings.cmdRailOpen = id; saveSettings(); render(); },
+    previewOpen: !!settings.previewOpen,
+    onPreviewToggle: () => { settings.previewOpen = !settings.previewOpen; saveSettings(); render(); },
+    pushPreview: (paneIdx) => pushPreviewForPane(paneIdx),
     onRename: async (i, oldName, newName) => {
       const p = panes[i];
       p.renaming = null;
@@ -277,6 +282,19 @@ function applyDraggableRegions() {
     try { N.window.setDraggableRegion(el); }
     catch (e) { console.warn('setDraggableRegion failed:', e); }
   });
+}
+
+function pushPreviewForPane(paneIdx) {
+  const pane = panes[paneIdx];
+  if (!pane) return;
+  const name = [...pane.selected][0];
+  if (!name) { showPreviewFor(null); return; }
+  // In search mode, results carry their own paths; otherwise reconstruct
+  // from the pane's current directory.
+  let entry = null;
+  if (pane.search?.results) entry = pane.search.results.find((e) => e.name === name) || null;
+  if (!entry) entry = pane.entries.find((e) => e.name === name) || null;
+  showPreviewFor(entry);
 }
 
 async function handleActivate(paneIdx, entry) {
@@ -458,6 +476,12 @@ async function doAction(action) {
       render();
       break;
     }
+    case 'previewToggle': {
+      settings.previewOpen = !settings.previewOpen;
+      saveSettings();
+      render();
+      break;
+    }
     case 'tabNew': {
       await tabNew(pane, pane.path);
       saveTabs();
@@ -476,6 +500,14 @@ async function doAction(action) {
 
 function bindGlobalKeys() {
   document.addEventListener('explorer:action', (e) => doAction(e.detail));
+  document.addEventListener('explorer:select-change', (e) => {
+    if (!settings.previewOpen) return;
+    // Mirror the active pane's first selection into the preview pane.
+    // Cross-pane clicks change activePane via the existing flow; this
+    // listener just reads whichever pane is current at event time.
+    const idx = e.detail?.paneIdx ?? activePane;
+    pushPreviewForPane(idx);
+  });
   document.addEventListener('keydown', (e) => {
     // Both directions now anchor the palette to a visible input
     // (`.palette-input`) embedded in their chrome. Ctrl+K focuses it;
@@ -492,6 +524,14 @@ function bindGlobalKeys() {
         e.preventDefault();
         openPalette({ ctx: paletteCtx, getPane: () => panes[activePane] });
       }
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'P')) {
+      // Ctrl+P toggles the right-side preview pane.
+      e.preventDefault();
+      settings.previewOpen = !settings.previewOpen;
+      saveSettings();
+      render();
       return;
     }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L')) {

@@ -7,6 +7,7 @@ import { renderRows, buildSegPath, selectionSizeLabel, getRecent, renderSearchBa
 import { RAIL_ITEMS } from '../sidebar-data.js';
 import { applyLayout } from '../layout.js';
 import { openPalette, closePalette, isPaletteOpen } from '../palette.js';
+import { ensurePreviewPanel, bindPreviewClose, showPreviewFor } from '../preview.js';
 import * as fs from '../fs.js';
 
 const LAYOUT_OPTS = [
@@ -33,6 +34,13 @@ export function renderCmd(root, ctx) {
   applyLayout(grid, ctx.layout, ctx.splits, cards, ctx.onSplitChange);
 
   body.appendChild(grid);
+  if (ctx.previewOpen) {
+    const previewWrap = el('div', 'b-preview-wrap');
+    ensurePreviewPanel(previewWrap);
+    bindPreviewClose(() => ctx.onPreviewToggle());
+    body.appendChild(previewWrap);
+    queueMicrotask(() => ctx.pushPreview?.(ctx.activePane));
+  }
   app.appendChild(body);
   root.appendChild(app);
 }
@@ -56,6 +64,7 @@ function topBar(ctx) {
       <kbd>Ctrl K</kbd>
     </div>
     <div class="spacer"></div>
+    <button class="iconbtn ${ctx.previewOpen ? 'on' : ''}" data-act="previewToggle" title="Toggle preview pane (Ctrl+P)">${iconHTML('eye', 14)}</button>
     ${directionSwitcher(ctx)}
     ${layoutPicker(ctx)}
     ${viewPicker(ctx)}

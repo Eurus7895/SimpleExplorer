@@ -277,6 +277,26 @@ export async function listDir(path) {
   return out;
 }
 
+// Read text from a file, capped at maxBytes characters (rough — string
+// length, not bytes after UTF-8 decode). Used by the preview pane to
+// avoid blowing up the WebView with multi-megabyte logs / data files.
+// Returns null when the read fails (file gone, permission denied, etc.)
+// so callers can render a graceful fallback.
+export async function readTextFile(path, maxBytes = 1024 * 1024) {
+  if (!N) return '[mock preview]\n' + path;
+  try {
+    const text = await N.filesystem.readFile(path);
+    if (typeof text !== 'string') return String(text || '');
+    if (text.length > maxBytes) {
+      return text.slice(0, maxBytes) + `\n\n… (truncated to ${maxBytes} chars)`;
+    }
+    return text;
+  } catch (e) {
+    console.warn('readTextFile failed:', path, e);
+    return null;
+  }
+}
+
 export async function makeDir(path) {
   if (!N) { console.warn('[mock] mkdir', path); return; }
   await N.filesystem.createDirectory(path);

@@ -273,6 +273,11 @@ export function renderRows(state, opts = {}) {
       list.querySelectorAll('.row').forEach((r) => {
         r.classList.toggle('row--sel', state.selected.has(r.dataset.name));
       });
+      // Notify the preview pane (and anything else listening for
+      // selection changes) so it can refresh without a full re-render.
+      document.dispatchEvent(new CustomEvent('explorer:select-change', {
+        detail: { paneIdx },
+      }));
     });
 
     row.addEventListener('dblclick', () => {
