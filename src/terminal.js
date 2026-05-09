@@ -15,6 +15,7 @@
 //   radius small.
 
 import { iconHTML } from './icons.js';
+import * as fs from './fs.js';
 
 const SHELL_KEY = 'simple-explorer.terminal.shell';
 const TOGGLE_KEY = 'simple-explorer.terminal.open';
@@ -63,6 +64,13 @@ export async function newTerminal(cwd) {
     shell, cwd: cwd || '',
     pid: 0, lines: [],
     handlerOff: null,
+    // Per-tab command history (Up/Down arrows in the input). Capped
+    // at 200 entries so a long session doesn't bloat memory; the
+    // ephemeral 'draft' field stashes the in-progress line when the
+    // user starts arrowing into history so they can come back to it.
+    history: [],
+    historyIdx: -1,
+    draft: '',
   };
   try {
     // Neutralino 5.x signature: spawnProcess(command, cwd?). The
@@ -130,6 +138,86 @@ async function sendInput(tab, line) {
   if (!N || !tab.proc) return;
   try { await N.os.updateSpawnedProcess(tab.proc.id, 'stdIn', line + '\n'); }
   catch (e) { console.warn('terminal stdin failed:', e); }
+}
+
+// Tab autocompletion against the filesystem.
+//
+// Parses the last whitespace-delimited token from the input, treats it
+// as a path relative to the tab's cwd (or absolute if it starts with
+// `/`, `\`, or `<X>:`), lists the parent directory, and matches the
+// trailing tail against entry names case-insensitively. Single match
+// completes inline; multiple matches print the candidates beneath the
+// prompt and complete the longest common prefix.
+async function tabComplete(tab, input) {
+  const line = input.value;
+  const caret = input.selectionStart ?? line.length;
+  const before = line.slice(0, caret);
+  const after = line.slice(caret);
+  // Last whitespace-delimited token before the caret.
+  const tokenStart = Math.max(
+    before.lastIndexOf(' '),
+    before.lastIndexOf('\t'),
+  ) + 1;
+  const token = before.slice(tokenStart);
+  if (!token) return;
+
+  const win = /^[A-Za-z]:/.test(token) || token.includes('\\');
+  const sep = win || tab.cwd.includes('\\') ? '\\' : '/';
+
+  // Resolve the parent directory and the tail we're matching against.
+  let parent;
+  let tail;
+  const lastSep = Math.max(token.lastIndexOf('\\'), token.lastIndexOf('/'));
+  if (lastSep === -1) {
+    parent = tab.cwd || '.';
+    tail = token;
+  } else {
+    const head = token.slice(0, lastSep + 1);
+    tail = token.slice(lastSep + 1);
+    parent = isAbsolute(head) ? head : (tab.cwd ? joinCwd(tab.cwd, head, sep) : head);
+  }
+
+  let entries = [];
+  try { entries = await fs.listDir(fs.normalizePath(parent)); }
+  catch { return; }
+  const tailLower = tail.toLowerCase();
+  const matches = entries.filter((e) => e.name.toLowerCase().startsWith(tailLower));
+  if (!matches.length) return;
+
+  // Longest common prefix among matches (case-preserving from the
+  // first match).
+  let lcp = matches[0].name;
+  for (const m of matches) {
+    let i = 0;
+    while (i < lcp.length && i < m.name.length
+      && lcp[i].toLowerCase() === m.name[i].toLowerCase()) i++;
+    lcp = lcp.slice(0, i);
+  }
+
+  // Build the replacement: original head + completed name (+ trailing
+  // sep if it's a single directory match).
+  const head = token.slice(0, token.length - tail.length);
+  let completion = lcp;
+  if (matches.length === 1 && matches[0].is_dir) completion += sep;
+  const newToken = head + completion;
+  input.value = before.slice(0, tokenStart) + newToken + after;
+  const newCaret = tokenStart + newToken.length;
+  input.setSelectionRange(newCaret, newCaret);
+
+  // If multiple matches and the prefix didn't extend, list candidates
+  // in the output (mimics bash double-tab).
+  if (matches.length > 1 && lcp.length === tail.length) {
+    appendOutput(tab, matches.map((m) => m.name + (m.is_dir ? sep : '')).join('  ') + '\n');
+  }
+}
+
+function isAbsolute(p) {
+  return /^[A-Za-z]:/.test(p) || p.startsWith('/') || p.startsWith('\\');
+}
+
+function joinCwd(cwd, rel, sep) {
+  if (cwd.endsWith(sep)) return cwd + rel;
+  return cwd + sep + rel;
 }
 
 // Render the bottom panel into `container`. Returns a cleanup function.
@@ -213,13 +301,65 @@ export function renderTerminal(container, { onClose, onNewTab, panePath }) {
   `;
   body.appendChild(inputRow);
   const input = inputRow.querySelector('[data-term-input]');
-  input.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter') return;
-    e.preventDefault();
-    const line = input.value;
-    appendOutput(active, `> ${line}\n`);
-    sendInput(active, line);
-    input.value = '';
+  input.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const line = input.value;
+      appendOutput(active, `> ${line}\n`);
+      sendInput(active, line);
+      // Push to history (skip empty + same-as-last duplicates), reset
+      // navigation cursor, drop the in-progress draft.
+      if (line.trim() && active.history[active.history.length - 1] !== line) {
+        active.history.push(line);
+        if (active.history.length > 200) active.history.shift();
+      }
+      active.historyIdx = -1;
+      active.draft = '';
+      input.value = '';
+      return;
+    }
+    if (e.key === 'Tab') {
+      // Without a PTY we can't forward Tab to the shell for real
+      // completion; the browser's default would jump focus to the
+      // next element. Intercept and do client-side path completion
+      // against the tab's cwd instead -- handles the common case of
+      // "cd Doc<Tab>" -> "cd Documents/" without losing focus.
+      e.preventDefault();
+      await tabComplete(active, input);
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      if (!active.history.length) return;
+      e.preventDefault();
+      if (active.historyIdx === -1) active.draft = input.value;
+      active.historyIdx = Math.min(active.history.length - 1, active.historyIdx + 1);
+      const item = active.history[active.history.length - 1 - active.historyIdx];
+      input.value = item ?? '';
+      // Move caret to end so further typing extends the recalled line.
+      requestAnimationFrame(() => input.setSelectionRange(input.value.length, input.value.length));
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      if (active.historyIdx === -1) return;
+      e.preventDefault();
+      active.historyIdx -= 1;
+      if (active.historyIdx < 0) {
+        active.historyIdx = -1;
+        input.value = active.draft;
+      } else {
+        input.value = active.history[active.history.length - 1 - active.historyIdx];
+      }
+      requestAnimationFrame(() => input.setSelectionRange(input.value.length, input.value.length));
+      return;
+    }
+    if (e.key === 'l' && e.ctrlKey) {
+      // Ctrl+L clears the visible buffer (matches bash / cmd / pwsh).
+      e.preventDefault();
+      active.lines = [];
+      const out = document.querySelector(`[data-term-out="${active.id}"]`);
+      if (out) out.textContent = '';
+      return;
+    }
   });
   setTimeout(() => input.focus(), 0);
 
