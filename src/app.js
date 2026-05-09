@@ -10,6 +10,7 @@ import { LAYOUT_DEFS, DEFAULT_SPLITS } from './layout.js';
 import { openPalette, isPaletteOpen } from './palette.js';
 import { recursiveSearch } from './search.js';
 import { ensurePreviewPanel, bindPreviewClose, showPreviewFor } from './preview.js';
+import { toggleTerminal } from './terminal.js';
 
 // Boot the Neutralino client. Safe to call before DOM ready; APIs queue until
 // the runtime handshake completes. No-op when running directly in a browser
@@ -547,6 +548,14 @@ function bindGlobalKeys() {
       e.preventDefault();
       settings.previewOpen = !settings.previewOpen;
       saveSettings();
+      render();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === '`') {
+      // Ctrl+` toggles the integrated terminal (Cmd direction only).
+      if (settings.direction !== 'cmd') return;
+      e.preventDefault();
+      toggleTerminal();
       render();
       return;
     }

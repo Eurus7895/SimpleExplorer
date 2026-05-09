@@ -468,6 +468,78 @@ kbd {
 }
 
 .b-grid { flex: 1; display: grid; padding: 8px; min-height: 0; }
+
+/* ── Integrated terminal (Phase 7g) ──────────────────────────────── */
+.b-term-wrap {
+  flex: 0 0 240px; min-height: 120px;
+  border-top: 1px solid var(--border); background: var(--surface2);
+  display: flex; flex-direction: column;
+}
+.term { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.term__head {
+  display: flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 6px;
+  background: var(--chrome); border-bottom: 1px solid var(--border-soft);
+  font-size: 11px; color: var(--text-mute);
+}
+.term__tabs { display: flex; gap: 2px; }
+.term__tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 22px; padding: 0 8px;
+  background: transparent; border: 1px solid transparent; border-radius: 4px;
+  color: var(--text-mute); cursor: pointer; font-size: 11px;
+}
+.term__tab:hover { background: var(--hover); color: var(--text); }
+.term__tab--on {
+  background: var(--bg); color: var(--text);
+  border-color: var(--border-soft);
+}
+.term__tab-close { color: var(--text-dim); cursor: pointer; }
+.term__tab-close:hover { color: var(--text); }
+.term__btn {
+  width: 22px; height: 22px; padding: 0;
+  background: transparent; border: none; border-radius: 4px; cursor: pointer;
+  color: var(--text-mute); display: inline-flex; align-items: center; justify-content: center;
+}
+.term__btn:hover { background: var(--hover); color: var(--text); }
+
+.term__body { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+.term__out {
+  flex: 1; margin: 0; padding: 8px 12px; overflow: auto;
+  font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
+  font-size: 12px; line-height: 1.45;
+  color: var(--text); background: var(--bg);
+  white-space: pre-wrap; word-break: break-word;
+  user-select: text;
+}
+.term__input-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 12px;
+  border-top: 1px solid var(--border-soft); background: var(--surface);
+}
+.term__prompt {
+  font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
+  font-size: 11.5px; color: var(--text-mute);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 280px;
+}
+.term__input {
+  flex: 1; height: 22px;
+  background: transparent; border: none; outline: none;
+  font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
+  font-size: 12px; color: var(--text);
+}
+
+.term__empty {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  color: var(--text-dim);
+}
+.term__start {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); cursor: pointer; font-size: 12.5px;
+}
+.term__start:hover { border-color: var(--accent); color: var(--accent); }
 .b-pane {
   background: var(--surface);
   border: 1px solid var(--border);
