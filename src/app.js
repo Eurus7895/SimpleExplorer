@@ -3,7 +3,7 @@
 // that paints the chrome around the panes.
 
 import * as fs from './fs.js';
-import { createPaneState, navigate, goBack, goForward, goUp, loadPath, tabNew, tabClose, tabSwitch, tabSnapshot } from './pane.js';
+import { createPaneState, navigate, goBack, goForward, goUp, loadPath, tabNew, tabClose, tabSwitch, tabSnapshot, sortedEntries } from './pane.js';
 import { renderFluent, statusBar as fluentStatusBar } from './directions/fluent.js';
 import { renderCmd } from './directions/cmd.js';
 import { LAYOUT_DEFS, DEFAULT_SPLITS } from './layout.js';
@@ -632,16 +632,28 @@ function bindGlobalKeys() {
       if (pane?.selected.size) { pane.selected.clear(); render(); }
     }
     else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      // Type-to-jump (Windows Explorer style): printable keys accumulate
-      // into a prefix buffer for 750 ms; the active pane jumps to the
-      // first row whose name starts with the buffer. Doesn't filter the
-      // list — selection moves only.
+      // Type-to-jump (Windows Explorer style):
+      //   - repeated SAME letter within the 750 ms window cycles
+      //     through every row whose name starts with that letter
+      //     (so v, v, v walks Videos -> vscode-... -> workspace's
+      //     v-folders).
+      //   - different letters in quick succession accumulate into a
+      //     prefix and jump to the first match (so v, i jumps to
+      //     "Videos").
+      // The buffer collapses back to a single char on each repeat
+      // so the cycle state is unambiguous.
       const ch = e.key.toLowerCase();
       if (!/[a-z0-9._\-+ ]/.test(ch)) return;
-      typeBuf += ch;
+      const isRepeat = typeBuf.length > 0 && [...typeBuf].every((c) => c === ch);
+      if (isRepeat) {
+        typeBuf = ch;
+        typeJump(ch, /* cycle */ true);
+      } else {
+        typeBuf += ch;
+        typeJump(typeBuf, /* cycle */ false);
+      }
       clearTimeout(typeBufTimer);
       typeBufTimer = setTimeout(() => { typeBuf = ''; }, 750);
-      typeJump(typeBuf);
     }
   });
 }
@@ -649,11 +661,24 @@ function bindGlobalKeys() {
 let typeBuf = '';
 let typeBufTimer = null;
 
-function typeJump(prefix) {
+function typeJump(prefix, cycle) {
   const pane = panes[activePane];
   if (!pane || !pane.entries.length) return;
-  const found = pane.entries.find((it) => it.name.toLowerCase().startsWith(prefix));
-  if (!found) return;
+  // Walk in the visible order (folders-first, current sort key) so the
+  // match the user sees on screen is the match we land on.
+  const items = sortedEntries(pane);
+  const matches = items.filter((it) => it.name.toLowerCase().startsWith(prefix));
+  if (!matches.length) return;
+  let found;
+  if (cycle) {
+    // Continue from after the currently selected row, wrapping around
+    // so the last v-match -> first v-match feels continuous.
+    const current = [...pane.selected][0];
+    const idx = matches.findIndex((m) => m.name === current);
+    found = matches[(idx + 1) % matches.length];
+  } else {
+    found = matches[0];
+  }
   pane.selected.clear();
   pane.selected.add(found.name);
   render();
