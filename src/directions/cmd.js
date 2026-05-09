@@ -181,6 +181,7 @@ function escapeHtml(s) {
 
 function paneCard(ctx, pane, i) {
   const card = el('div', 'b-pane' + (i === ctx.activePane ? ' b-pane--active' : ''));
+  card.dataset.paneIdx = i;
   card.addEventListener('click', () => ctx.setActivePane(i));
 
   const head = el('div', 'b-pane__head');
@@ -212,10 +213,12 @@ function paneCard(ctx, pane, i) {
   card.appendChild(head);
 
   const rows = renderRows(pane, {
+    paneIdx: i,
     density: 'cmd',
     onActivate: (entry) => ctx.onActivateEntry(i, entry),
     onPaneActivate: () => ctx.setActivePane(i),
     onRename: (oldName, newName) => ctx.onRename(i, oldName, newName),
+    onDrop: (srcIdx, names, op) => ctx.onDrop(srcIdx, i, names, op),
   });
   card.appendChild(rows);
 

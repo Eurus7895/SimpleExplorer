@@ -64,6 +64,13 @@ export function normalizePath(path) {
   return p;
 }
 
+export function sameDrive(a, b) {
+  const da = String(normalizePath(a) || '').match(/^([A-Za-z]):/);
+  const db = String(normalizePath(b) || '').match(/^([A-Za-z]):/);
+  if (!da || !db) return true;
+  return da[1].toLowerCase() === db[1].toLowerCase();
+}
+
 export function joinPath(parent, name) {
   if (!parent) return name;
   const norm = normalizePath(parent);

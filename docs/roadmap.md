@@ -92,14 +92,6 @@ recursive search, integrated terminal, …).
 
 ## Known bugs
 
-- **Cross-pane row double-click swallowed** *(workaround documented below)*.
-  Clicking a row in a non-active pane currently only selects, it no longer
-  activates that pane (we had to stop the click from bubbling to the pane
-  card or same-pane double-click was broken too). To enter a folder in a
-  pane that isn't active, click the pane's chrome (header / breadcrumb /
-  empty area) once to activate it, then double-click the folder. Fix:
-  refactor pane activation to toggle a CSS class directly instead of
-  triggering a full re-render. Tracked under Phase 6.
 - **`extras/shellhelp.exe` not yet compiled.** Right-click → Properties /
   Delete-to-trash / drive list fall back to PowerShell (~250–400 ms vs
   ~50 ms native). Build once with MSVC; `scripts/run.ps1` automates from
@@ -144,7 +136,6 @@ These render and look right, but clicking them does nothing today:
 - Tree view (left of the row list, expandable folders)
 - Column view (Finder-style cascading panes)
 - Recursive search (only filter visible rows in MVP)
-- Drag-and-drop between panes
 - Drag-and-drop from / to stock Windows Explorer
 - Custom Win11 Mica title bar chrome (frameless window + own controls)
 - Full Windows shell context menu via `IContextMenu`
@@ -459,17 +450,43 @@ Phase 7.
   the same rail icon to close. Default open: `Recent`.
   Persisted under `settings.cmdRailOpen`.
 
-### Phase 6 — Pending (smaller items, mix and match)
+### ~~Phase 6b.1 — Pane-activation refactor~~ (shipped)
 
-- **Pane-activation refactor** so cross-pane row clicks work without
-  re-rendering. Today, `setActivePane()` triggers a full `render()` which
-  rebuilds the row DOM and breaks any in-flight double-click. Fix: toggle
-  the active CSS class directly on pane cards instead of re-rendering;
-  re-render only when something else (layout / direction / theme)
-  actually changed. Will let row click in a non-active pane both select
-  and activate cleanly.
-- Drag-and-drop between panes (move within drive, copy across drives —
-  same rule stock Explorer uses).
+`setActivePane()` no longer triggers a full `render()`. New
+`applyActivePane(i)` in `app.js` toggles the active class on existing
+pane cards (looked up by `data-pane-idx`) and rebuilds Fluent's
+global `.a-statusbar` in place — no row DOM teardown. The
+`e.stopPropagation()` workaround on `pane.js`'s row click is gone:
+a single click in a non-active pane now both selects the row *and*
+activates the pane, and double-clicking a folder in a non-active
+pane opens it without the "click chrome first" detour. Cmd's
+per-pane `b-pane__foot` is unaffected — it shows that pane's own
+stats and doesn't depend on which pane is active.
+
+### ~~Phase 6b.2 — Drag-and-drop between panes~~ (shipped)
+
+HTML5 DnD wired in `src/pane.js`: rows are `draggable`, the rows
+container handles `dragenter` / `dragover` / `dragleave` / `drop`.
+A module-scope `activeDrag` cache holds the in-flight payload so
+`dragover` can pick a same-drive vs cross-drive cursor (HTML5
+hides dataTransfer values during drag, only the types list is
+visible). `dragstart` selects the dragged row if it wasn't already
+in the selection — matches stock Explorer. Modifier keys override
+the default: Ctrl forces copy, Shift forces move; otherwise
+same-drive = move, cross-drive = copy.
+
+Drops route through a new `ctx.onDrop(srcIdx, dstIdx, names, op)`
+in `app.js` that calls `fs.copy` / `fs.move` per item, reloads
+both panes via `safeLoad`, and activates the destination pane so
+post-drop state is sane. `fs.sameDrive(a, b)` (drive-letter
+compare on normalized paths) lives next to the existing path
+helpers. `text/uri-list` is also stuffed onto `dataTransfer` —
+free groundwork for the Phase 7 OS-DnD work.
+
+Visual cue: `.rows--drop` adds an inset accent ring + tinted
+background while a foreign drag is over the destination pane;
+an enter/leave depth counter avoids flicker as the cursor
+crosses child elements.
 
 ### Phase 7 — Larger features (deferred, design needed)
 

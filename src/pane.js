@@ -9,6 +9,18 @@ import * as fs from './fs.js';
 const RECENT_KEY = 'simple-explorer.recent';
 const MAX_RECENT = 12;
 
+// HTML5 dataTransfer hides values during dragover (you only get the
+// types list). We stash the in-flight payload here on dragstart so
+// dragover can decide same-drive vs cross-drive without it.
+let activeDrag = null;
+const DND_TYPE = 'application/x-simpleexplorer';
+
+function dndOp(e, srcPath, dstPath) {
+  if (e.ctrlKey) return 'copy';
+  if (e.shiftKey) return 'move';
+  return fs.sameDrive(srcPath, dstPath) ? 'move' : 'copy';
+}
+
 export const DEFAULT_SORT = { key: 'name', dir: 'asc' };
 export const DEFAULT_VIEW = 'details';
 
@@ -172,7 +184,7 @@ export function getRecent() {
 // ── Renderers ──────────────────────────────────────────────────────────
 
 export function renderRows(state, opts = {}) {
-  const { onActivate, onPaneActivate, onRename, density = 'normal', accent } = opts;
+  const { onActivate, onPaneActivate, onRename, onDrop, paneIdx = 0, density = 'normal', accent } = opts;
   const items = filtered(state);
   const list = document.createElement('div');
   list.className = 'rows';
@@ -188,6 +200,7 @@ export function renderRows(state, opts = {}) {
     const row = document.createElement('div');
     row.className = 'row';
     row.dataset.name = it.name;
+    row.draggable = true;
     if (state.selected.has(it.name)) row.classList.add('row--sel');
     if (accent) row.style.setProperty('--row-accent', accent);
 
@@ -240,10 +253,6 @@ export function renderRows(state, opts = {}) {
     row.append(nameCell, sizeCell, modCell, kindCell);
 
     row.addEventListener('click', (e) => {
-      // Don't bubble to the pane card — the card's click handler triggers
-      // setActivePane → render(), which would tear the row out from under
-      // an in-progress double-click and silently swallow it.
-      e.stopPropagation();
       if (e.shiftKey || e.metaKey || e.ctrlKey) {
         if (state.selected.has(it.name)) state.selected.delete(it.name);
         else state.selected.add(it.name);
@@ -259,6 +268,30 @@ export function renderRows(state, opts = {}) {
     row.addEventListener('dblclick', () => {
       onActivate?.(it);
     });
+
+    row.addEventListener('dragstart', (e) => {
+      // Stock-Explorer behavior: dragging an unselected row replaces the
+      // selection with just it. Restoring on cancel surprises users more
+      // than it helps, so we don't.
+      if (!state.selected.has(it.name)) {
+        state.selected.clear();
+        state.selected.add(it.name);
+        list.querySelectorAll('.row').forEach((r) => {
+          r.classList.toggle('row--sel', state.selected.has(r.dataset.name));
+        });
+      }
+      const names = [...state.selected];
+      activeDrag = { srcIdx: paneIdx, srcPath: state.path, names };
+      const payload = JSON.stringify(activeDrag);
+      e.dataTransfer.setData(DND_TYPE, payload);
+      // Cheap groundwork for Phase 7 OS-DnD: target apps that read URI
+      // lists already have everything they need.
+      const uris = names.map((n) => 'file:///' + fs.joinPath(state.path, n).replace(/\\/g, '/').replace(/^\/?/, ''));
+      e.dataTransfer.setData('text/uri-list', uris.join('\r\n'));
+      e.dataTransfer.effectAllowed = 'copyMove';
+    });
+
+    row.addEventListener('dragend', () => { activeDrag = null; });
 
     row.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -294,6 +327,39 @@ export function renderRows(state, opts = {}) {
     state.selected.clear();
     list.querySelectorAll('.row').forEach((r) => r.classList.remove('row--sel'));
     showFolderContextMenu(e.clientX, e.clientY, state);
+  });
+
+  // Counter avoids flicker as dragover crosses child elements.
+  let dragDepth = 0;
+  list.addEventListener('dragenter', (e) => {
+    if (!activeDrag || activeDrag.srcIdx === paneIdx) return;
+    if (!e.dataTransfer.types.includes(DND_TYPE)) return;
+    dragDepth += 1;
+    list.classList.add('rows--drop');
+  });
+  list.addEventListener('dragover', (e) => {
+    if (!activeDrag || activeDrag.srcIdx === paneIdx) return;
+    if (!e.dataTransfer.types.includes(DND_TYPE)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = dndOp(e, activeDrag.srcPath, state.path);
+  });
+  list.addEventListener('dragleave', () => {
+    if (!activeDrag || activeDrag.srcIdx === paneIdx) return;
+    dragDepth -= 1;
+    if (dragDepth <= 0) { dragDepth = 0; list.classList.remove('rows--drop'); }
+  });
+  list.addEventListener('drop', (e) => {
+    if (!activeDrag || activeDrag.srcIdx === paneIdx) return;
+    const raw = e.dataTransfer.getData(DND_TYPE);
+    if (!raw) return;
+    e.preventDefault();
+    dragDepth = 0;
+    list.classList.remove('rows--drop');
+    let payload;
+    try { payload = JSON.parse(raw); } catch { return; }
+    const op = dndOp(e, payload.srcPath, state.path);
+    onDrop?.(payload.srcIdx, payload.names, op);
+    activeDrag = null;
   });
 
   return list;
