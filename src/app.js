@@ -633,19 +633,26 @@ function bindGlobalKeys() {
     }
     else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
       // Type-to-jump (Windows Explorer style):
-      //   - repeated SAME letter within the 750 ms window cycles
-      //     through every row whose name starts with that letter
-      //     (so v, v, v walks Videos -> vscode-... -> workspace's
-      //     v-folders).
-      //   - different letters in quick succession accumulate into a
-      //     prefix and jump to the first match (so v, i jumps to
-      //     "Videos").
-      // The buffer collapses back to a single char on each repeat
-      // so the cycle state is unambiguous.
+      //   - single-letter press always cycles to the *next* row whose
+      //     name starts with that letter, walking the matches relative
+      //     to the current selection. Repeating the same letter walks
+      //     forward through the match list and wraps.
+      //   - different letters in quick succession (within the 1.2 s
+      //     window) accumulate into a prefix and jump to the first
+      //     match of the prefix (so v, i jumps to "Videos").
+      //
+      // The previous version relied on typeBuf still containing the
+      // letter on the second press; if the timer fired or render took
+      // a tick too long, typeBuf reset to '' and the second press
+      // looked like a fresh first press, staying on "Videos". The
+      // current logic treats "buffer empty OR buffer is all the same
+      // char as ch" as cycle mode -- so cycling works regardless of
+      // timing, and only a different letter pressed before the
+      // timeout extends the prefix.
       const ch = e.key.toLowerCase();
       if (!/[a-z0-9._\-+ ]/.test(ch)) return;
-      const isRepeat = typeBuf.length > 0 && [...typeBuf].every((c) => c === ch);
-      if (isRepeat) {
+      const cycle = !typeBuf || [...typeBuf].every((c) => c === ch);
+      if (cycle) {
         typeBuf = ch;
         typeJump(ch, /* cycle */ true);
       } else {
@@ -653,7 +660,7 @@ function bindGlobalKeys() {
         typeJump(typeBuf, /* cycle */ false);
       }
       clearTimeout(typeBufTimer);
-      typeBufTimer = setTimeout(() => { typeBuf = ''; }, 750);
+      typeBufTimer = setTimeout(() => { typeBuf = ''; }, 1200);
     }
   });
 }
