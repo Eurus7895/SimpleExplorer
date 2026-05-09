@@ -39,6 +39,9 @@ export function renderCmd(root, ctx) {
 
 function topBar(ctx) {
   const bar = el('div', 'b-topbar');
+  bar.dataset.dragRegion = '';
+  const maxIcon = ctx.maximized ? '❐' : '☐';
+  const maxTitle = ctx.maximized ? 'Restore' : 'Maximize';
   bar.innerHTML = `
     <div class="b-brand">
       <div class="b-brand__logo"></div>
@@ -57,12 +60,22 @@ function topBar(ctx) {
     ${layoutPicker(ctx)}
     ${viewPicker(ctx)}
     <button class="iconbtn" data-act="theme" title="Toggle theme">${iconHTML(ctx.theme === 'dark' ? 'sun' : 'moon')}</button>
+    <div class="b-wincontrols">
+      <span class="b-winctl" data-winctl="min" title="Minimize">─</span>
+      <span class="b-winctl" data-winctl="max" title="${maxTitle}">${maxIcon}</span>
+      <span class="b-winctl b-winctl--close" data-winctl="close" title="Close">✕</span>
+    </div>
   `;
   bindClicks(bar, ctx);
   bindNav(bar, ctx);
   bindLayout(bar, ctx);
   bindView(bar, ctx);
   bindPalette(bar, ctx);
+  bindWinCtl(bar, ctx);
+  bar.addEventListener('dblclick', (e) => {
+    if (e.target.closest('button, input, .b-winctl, .dir-switch, .b-cmdpalette, .b-rail, [data-layout], [data-view]')) return;
+    ctx.onWinCtl('max');
+  });
   return bar;
 }
 
@@ -317,6 +330,11 @@ function bindNav(scope, ctx) {
     else if (el.dataset.nav === 'fwd') ctx.onPaneForward(ctx.activePane);
     else if (el.dataset.nav === 'up') ctx.onPaneUp(ctx.activePane);
   }));
+}
+
+function bindWinCtl(scope, ctx) {
+  scope.querySelectorAll('[data-winctl]').forEach((el) =>
+    el.addEventListener('click', (e) => { e.stopPropagation(); ctx.onWinCtl(el.dataset.winctl); }));
 }
 
 function bindLayout(scope, ctx) {

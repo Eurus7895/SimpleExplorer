@@ -39,6 +39,9 @@ export function renderFluent(root, ctx) {
 
 function titleBar(ctx) {
   const bar = el('div', 'a-titlebar');
+  bar.dataset.dragRegion = '';
+  const maxIcon = ctx.maximized ? '❐' : '☐';
+  const maxTitle = ctx.maximized ? 'Restore' : 'Maximize';
   bar.innerHTML = `
     <div class="a-brand">
       <div class="a-brand__logo"></div>
@@ -51,12 +54,18 @@ function titleBar(ctx) {
     </button>
     <div class="a-wincontrols">
       <span class="a-winctl" data-winctl="min" title="Minimize">─</span>
-      <span class="a-winctl a-winctl--disabled" title="Use the OS title bar to maximize (frameless mode lands in Phase 7)">☐</span>
+      <span class="a-winctl" data-winctl="max" title="${maxTitle}">${maxIcon}</span>
       <span class="a-winctl a-winctl--close" data-winctl="close" title="Close">✕</span>
     </div>
   `;
   bindClicks(bar, ctx);
   bindWinCtl(bar, ctx);
+  // Double-click toggles max (Win11 convention). Skip if a button was the
+  // target so the click doesn't double-fire with single-click maximize.
+  bar.addEventListener('dblclick', (e) => {
+    if (e.target.closest('.a-winctl, .iconbtn, .dir-switch')) return;
+    ctx.onWinCtl('max');
+  });
   return bar;
 }
 

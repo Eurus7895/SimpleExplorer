@@ -21,6 +21,34 @@ if (window.Neutralino) {
   }
 }
 
+// Mica needs Win11 22H2+ (build 22621). On older builds we fall back to a
+// flat acrylic backdrop. The detection result toggles a [data-mica] on the
+// root element which CSS reads.
+async function readInitialMaximizedState() {
+  const N = window.Neutralino;
+  if (!N || !N.window || !N.window.isMaximized) return;
+  try { windowMaximized = await N.window.isMaximized(); }
+  catch { /* leave default */ }
+}
+
+async function detectBackdropCapability() {
+  const N = window.Neutralino;
+  if (!N || !N.computer || !N.computer.getOSInfo) {
+    document.documentElement.dataset.mica = 'fallback';
+    return;
+  }
+  try {
+    const info = await N.computer.getOSInfo();
+    // Neutralino exposes `name`, `description`, `version` (e.g. "10.0.22621").
+    const m = (info.version || '').match(/(\d+)\.(\d+)\.(\d+)/);
+    const build = m ? parseInt(m[3], 10) : 0;
+    const isMicaCapable = /windows/i.test(info.name || '') && build >= 22621;
+    document.documentElement.dataset.mica = isMicaCapable ? 'on' : 'fallback';
+  } catch {
+    document.documentElement.dataset.mica = 'fallback';
+  }
+}
+
 const STATE_KEY = 'simple-explorer.state';
 const TABS_KEY = 'simple-explorer.tabs';
 const DEFAULT = {
@@ -41,6 +69,7 @@ let panes = [];
 let activePane = 0;
 let homePath = '~';
 let drives = [];
+let windowMaximized = false;
 
 // Stable adapter for the palette so the global Ctrl+K handler doesn't
 // have to chase the per-render ctx. Getters resolve at call time so
@@ -53,6 +82,8 @@ const paletteCtx = {
 };
 
 async function init() {
+  await detectBackdropCapability();
+  await readInitialMaximizedState();
   homePath = (await fs.homeDir()) || '~';
   const seedPaths = [
     homePath,
@@ -138,24 +169,23 @@ function render() {
       saveSettings();
       render();
     },
+    maximized: windowMaximized,
     async onWinCtl(kind) {
       const N = window.Neutralino; if (!N) return;
-      // Each call wrapped individually — Neutralino 5.6.0 with the default
-      // (non-frameless) window mode can race with the OS title bar and
-      // leave the window in a degenerate state if these throw mid-toggle.
-      // The OS title bar still has its own ☐ / ─ / ✕, so on failure the
-      // user can recover from there.
       if (kind === 'min') {
         try { await N.window.minimize(); }
         catch (e) { console.warn('window.minimize failed:', e); }
       } else if (kind === 'max') {
-        // Always maximize — let the OS title bar handle un-maximize.
-        // The previous isMaximized() / unmaximize() toggle could send the
-        // window off-screen on multi-monitor / HiDPI setups.
+        // Frameless mode owns the title bar — toggle is mandatory because
+        // there is no OS chrome to fall back on. Wrap each call so a failed
+        // isMaximized() check doesn't strand the window in a half state.
         try {
-          await N.window.maximize();
-          await N.window.show(); // safety net in case maximize hid us
-        } catch (e) { console.warn('window.maximize failed:', e); }
+          const isMax = await N.window.isMaximized();
+          if (isMax) await N.window.unmaximize();
+          else await N.window.maximize();
+          windowMaximized = !isMax;
+          render();
+        } catch (e) { console.warn('window.max toggle failed:', e); }
       } else if (kind === 'close') {
         try { await N.app.exit(); }
         catch (e) { console.warn('app.exit failed:', e); }
@@ -208,7 +238,22 @@ function render() {
   };
   document.documentElement.dataset.theme = ctx.theme;
   document.documentElement.dataset.direction = ctx.direction;
+  document.documentElement.dataset.maximized = ctx.maximized ? '1' : '0';
   dir.fn(root, ctx);
+  applyDraggableRegions();
+}
+
+// Wire every [data-drag-region] in the freshly rendered DOM up to
+// Neutralino's window-drag handler. Re-rendering creates new elements
+// each pass, so old handlers are GC'd with their nodes -- no manual
+// teardown needed. No-op in mock mode (browser preview).
+function applyDraggableRegions() {
+  const N = window.Neutralino;
+  if (!N || !N.window || !N.window.setDraggableRegion) return;
+  document.querySelectorAll('[data-drag-region]').forEach((el) => {
+    try { N.window.setDraggableRegion(el); }
+    catch (e) { console.warn('setDraggableRegion failed:', e); }
+  });
 }
 
 async function handleActivate(paneIdx, entry) {

@@ -617,3 +617,59 @@ body.is-resizing-col .row, body.is-resizing-row .row { pointer-events: none; }
 .popover__item--active { background: var(--accent-bg); color: var(--accent); }
 .popover__hint { color: var(--text-dim); font-size: 11px; }
 .popover__item--active .popover__hint { color: var(--accent); }
+
+/* ── Frameless chrome (Phase 7a) ─────────────────────────────────── */
+/* The Neutralino window is `borderless: true`; we own the entire chrome.
+   On Win11 22H2+ ([data-mica="on"]) we render a translucent backdrop that
+   gives a Mica-like feel even though Neutralino can't enable real Mica
+   without native HWND access. On older builds we fall back to a flat
+   acrylic blur. The 1px outline keeps the frameless window legible
+   against the desktop wallpaper. */
+.a-app, .b-app {
+  border: 1px solid var(--border);
+}
+[data-maximized="1"] .a-app,
+[data-maximized="1"] .b-app {
+  border: none;
+}
+[data-mica="on"] .a-titlebar,
+[data-mica="on"] .b-topbar {
+  background: color-mix(in srgb, var(--chrome) 70%, transparent);
+  backdrop-filter: blur(40px) saturate(150%);
+  -webkit-backdrop-filter: blur(40px) saturate(150%);
+}
+[data-mica="fallback"] .a-titlebar,
+[data-mica="fallback"] .b-topbar {
+  background: var(--chrome);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+/* Drag-region children that should never trigger window drag. The visual
+   feedback stays as-is; setDraggableRegion checks pointer target tag and
+   skips BUTTON/INPUT, but explicit cursor hints help. */
+[data-drag-region] {
+  -webkit-app-region: drag; /* harmless on WebView2; matches Electron idiom */
+  cursor: default;
+}
+[data-drag-region] button,
+[data-drag-region] input,
+[data-drag-region] kbd,
+[data-drag-region] .dir-switch,
+[data-drag-region] .a-winctl,
+[data-drag-region] .b-winctl,
+[data-drag-region] [data-layout],
+[data-drag-region] [data-view],
+[data-drag-region] [data-act] {
+  -webkit-app-region: no-drag;
+}
+
+/* Cmd window controls — same dimensions as Fluent's so muscle memory
+   carries between directions. */
+.b-wincontrols { display: flex; margin-left: 6px; }
+.b-winctl {
+  width: 36px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10px; color: var(--text-mute); cursor: pointer;
+  border-radius: 4px;
+}
+.b-winctl:hover { background: var(--hover); }
+.b-winctl--close:hover { background: #c42b1c; color: #fff; }
