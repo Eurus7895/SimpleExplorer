@@ -742,14 +742,27 @@ body.is-resizing-col .row, body.is-resizing-row .row { pointer-events: none; }
    On Win11 22H2+ ([data-mica="on"]) we render a translucent backdrop that
    gives a Mica-like feel even though Neutralino can't enable real Mica
    without native HWND access. On older builds we fall back to a flat
-   acrylic blur. The 1px outline keeps the frameless window legible
-   against the desktop wallpaper. */
+   acrylic blur.
+
+   The 1px outline keeps the frameless window legible against the
+   desktop wallpaper. We use `outline` instead of `border` so the
+   border thickness doesn't subtract from the inner width/height --
+   a 1px border on a 100% box pushes content over by 1px and was
+   clipping scrollbars at the right edge of panes. */
 .a-app, .b-app {
-  border: 1px solid var(--border);
+  outline: 1px solid var(--border);
+  outline-offset: -1px;
 }
+/* Borderless-maximized overscan compensation: when Windows maximizes
+   a borderless window it still applies its WS_THICKFRAME (~8 px on
+   each edge), so the outermost pixels of our content are rendered
+   off-screen. Insetting the app by 8 px when maximized pulls the
+   chrome / panes / status bar back inside the visible area, fixing
+   the missing right-pane scrollbar and the clipped status-bar row. */
+[data-maximized="1"] body { padding: 8px; }
 [data-maximized="1"] .a-app,
 [data-maximized="1"] .b-app {
-  border: none;
+  outline: none;
 }
 [data-mica="on"] .a-titlebar,
 [data-mica="on"] .b-topbar {
