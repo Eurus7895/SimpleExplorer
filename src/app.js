@@ -499,6 +499,11 @@ async function doAction(action) {
       render();
       break;
     }
+    case 'terminalToggle': {
+      toggleTerminal();
+      render();
+      break;
+    }
     case 'tabNew': {
       await tabNew(pane, pane.path);
       saveTabs();
@@ -552,8 +557,7 @@ function bindGlobalKeys() {
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key === '`') {
-      // Ctrl+` toggles the integrated terminal (Cmd direction only).
-      if (settings.direction !== 'cmd') return;
+      // Ctrl+` toggles the integrated terminal in either direction.
       e.preventDefault();
       toggleTerminal();
       render();

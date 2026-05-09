@@ -10,6 +10,7 @@ import { applyLayout } from '../layout.js';
 import { openPalette, isPaletteOpen } from '../palette.js';
 import { ensurePreviewPanel, bindPreviewClose, showPreviewFor } from '../preview.js';
 import { renderTree } from '../tree.js';
+import { renderTerminal, isTerminalOpen, toggleTerminal } from '../terminal.js';
 
 const LAYOUT_OPTS = [
   { id: '1',  icn: 'one',       title: 'Single' },
@@ -42,6 +43,19 @@ export function renderFluent(root, ctx) {
     queueMicrotask(() => ctx.pushPreview?.(ctx.activePane));
   }
   app.appendChild(body);
+
+  // Integrated terminal (Phase 7g) — bottom panel, Fluent direction.
+  // Same module as Cmd; the styling adapts via the shared .term* rules.
+  if (isTerminalOpen()) {
+    const termWrap = el('div', 'a-term-wrap');
+    const activePane = ctx.panes[ctx.activePane];
+    renderTerminal(termWrap, {
+      onClose: () => { toggleTerminal(); ctx.rerender?.(); },
+      panePath: activePane?.path,
+    });
+    app.appendChild(termWrap);
+  }
+
   app.appendChild(statusBar(ctx));
   root.appendChild(app);
 }
@@ -97,6 +111,7 @@ function commandBar(ctx) {
       <kbd>Ctrl K</kbd>
     </div>
     <div class="spacer"></div>
+    <button class="iconbtn ${isTerminalOpen() ? 'on' : ''}" data-act="terminalToggle" title="Toggle terminal (Ctrl+\`)">${iconHTML('terminal', 14)}</button>
     <button class="iconbtn ${ctx.previewOpen ? 'on' : ''}" data-act="previewToggle" title="Toggle preview pane (Ctrl+P)">${iconHTML('eye', 14)}</button>
     ${layoutPicker(ctx)}
     <span class="a-sep"></span>

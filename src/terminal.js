@@ -65,7 +65,12 @@ export async function newTerminal(cwd) {
     handlerOff: null,
   };
   try {
-    const proc = await N.os.spawnProcess(shell, { cwd: tab.cwd || undefined });
+    // Neutralino 5.x signature: spawnProcess(command, cwd?). The
+    // earlier `{ cwd }` options-object form silently fails native
+    // validation -- only positional cwd works.
+    const proc = tab.cwd
+      ? await N.os.spawnProcess(shell, tab.cwd)
+      : await N.os.spawnProcess(shell);
     tab.pid = proc.pid;
     tab.handlerOff = N.events.on('spawnedProcess', (e) => {
       if (e.detail?.id !== proc.id) return;
@@ -152,6 +157,15 @@ export function renderTerminal(container, { onClose, onNewTab, panePath }) {
     tab.className = 'term__tab' + (i === state.active ? ' term__tab--on' : '');
     tab.textContent = `${i + 1}: ${t.shell.replace(/\.exe$/i, '')}`;
     tab.addEventListener('click', () => { switchTerminal(i); rerender(); });
+    // Middle-click closes the tab (Chrome / VS Code convention, matches
+    // pane tabs in Phase 4). preventDefault stops the WebView's
+    // auto-scroll cursor that middle-button mousedown otherwise triggers.
+    tab.addEventListener('mousedown', (e) => {
+      if (e.button !== 1) return;
+      e.preventDefault();
+      e.stopPropagation();
+      closeTerminal(i).then(rerender);
+    });
     const x = document.createElement('span');
     x.className = 'term__tab-close';
     x.textContent = '×';

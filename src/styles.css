@@ -470,7 +470,7 @@ kbd {
 .b-grid { flex: 1; display: grid; padding: 8px; min-height: 0; }
 
 /* ── Integrated terminal (Phase 7g) ──────────────────────────────── */
-.b-term-wrap {
+.a-term-wrap, .b-term-wrap {
   flex: 0 0 240px; min-height: 120px;
   border-top: 1px solid var(--border); background: var(--surface2);
   display: flex; flex-direction: column;
