@@ -265,6 +265,45 @@ kbd {
 .a-sidebar__item small { font-size: 10px; color: var(--text-dim); }
 .a-sidebar__item .icn { color: var(--text-mute); }
 
+/* Sidebar mode tabs (Phase 7f) — switches the sidebar body between
+   the curated quick-access list and the folder tree. */
+.a-sidebar__tabs {
+  display: flex; gap: 2px; padding: 6px 8px 4px;
+  border-bottom: 1px solid var(--border-soft); margin-bottom: 6px;
+}
+.a-sidebar__tab {
+  flex: 1; height: 24px; padding: 0 8px;
+  background: transparent; border: 1px solid transparent; border-radius: 5px;
+  color: var(--text-mute); font-size: 11.5px; cursor: pointer;
+}
+.a-sidebar__tab:hover { background: var(--hover); }
+.a-sidebar__tab--on {
+  background: var(--accent-bg); color: var(--accent); font-weight: 600;
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.a-sidebar__tree { padding: 4px 0; }
+.tree__node { }
+.tree__row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 8px; cursor: pointer; color: var(--text);
+  border-radius: 4px; margin: 0 4px;
+}
+.tree__row:hover { background: var(--hover); }
+.tree__row--active { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+.tree__chev {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 12px; color: var(--text-dim); font-size: 13px;
+  transition: transform 80ms ease;
+}
+.tree__chev--open { transform: rotate(90deg); }
+.tree__ico { display: inline-flex; align-items: center; color: var(--text-mute); }
+.tree__label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.tree__loading, .tree__empty {
+  font-size: 11px; color: var(--text-dim); padding: 2px 0;
+  font-style: italic;
+}
+
 .a-grid {
   flex: 1; display: grid; padding: 6px;
   background: var(--bg); min-height: 0;
@@ -280,6 +319,10 @@ kbd {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
 }
+/* Suppress the default focus ring on pane cards -- we already paint
+   our own active-pane border above, and tabindex=-1 cards take focus
+   programmatically only. */
+.a-pane:focus, .b-pane:focus { outline: none; }
 .a-tabs {
   display: flex; align-items: center;
   background: var(--surface2); border-bottom: 1px solid var(--border-soft); height: 30px;
@@ -429,6 +472,85 @@ kbd {
 }
 
 .b-grid { flex: 1; display: grid; padding: 8px; min-height: 0; }
+
+/* ── Integrated terminal (Phase 7g) ──────────────────────────────── */
+.a-term-wrap, .b-term-wrap {
+  flex: 0 0 240px; min-height: 120px;
+  border-top: 1px solid var(--border); background: var(--surface2);
+  display: flex; flex-direction: column;
+}
+.term { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }
+/* Focus-zone cue: while the terminal input owns keystrokes, paint a
+   1px accent line along the panel's top edge so the user knows the
+   explorer shortcuts are paused. Click any pane to return focus. */
+.term--focused::before {
+  content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2px;
+  background: var(--accent); pointer-events: none;
+}
+.term__head {
+  display: flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 6px;
+  background: var(--chrome); border-bottom: 1px solid var(--border-soft);
+  font-size: 11px; color: var(--text-mute);
+}
+.term__tabs { display: flex; gap: 2px; }
+.term__tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 22px; padding: 0 8px;
+  background: transparent; border: 1px solid transparent; border-radius: 4px;
+  color: var(--text-mute); cursor: pointer; font-size: 11px;
+}
+.term__tab:hover { background: var(--hover); color: var(--text); }
+.term__tab--on {
+  background: var(--bg); color: var(--text);
+  border-color: var(--border-soft);
+}
+.term__tab-close { color: var(--text-dim); cursor: pointer; }
+.term__tab-close:hover { color: var(--text); }
+.term__btn {
+  width: 22px; height: 22px; padding: 0;
+  background: transparent; border: none; border-radius: 4px; cursor: pointer;
+  color: var(--text-mute); display: inline-flex; align-items: center; justify-content: center;
+}
+.term__btn:hover { background: var(--hover); color: var(--text); }
+
+.term__body { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+.term__out {
+  flex: 1; margin: 0; padding: 8px 12px; overflow: auto;
+  font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
+  font-size: 12px; line-height: 1.45;
+  color: var(--text); background: var(--bg);
+  white-space: pre-wrap; word-break: break-word;
+  user-select: text;
+}
+.term__input-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 12px;
+  border-top: 1px solid var(--border-soft); background: var(--surface);
+}
+.term__prompt {
+  font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
+  font-size: 11.5px; color: var(--text-mute);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 280px;
+}
+.term__input {
+  flex: 1; height: 22px;
+  background: transparent; border: none; outline: none;
+  font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
+  font-size: 12px; color: var(--text);
+}
+
+.term__empty {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  color: var(--text-dim);
+}
+.term__start {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); cursor: pointer; font-size: 12.5px;
+}
+.term__start:hover { border-color: var(--accent); color: var(--accent); }
 .b-pane {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -581,6 +703,14 @@ body.is-resizing-col .row, body.is-resizing-row .row { pointer-events: none; }
 .rows--tiles .row__name { flex-direction: column; gap: 4px; max-width: 100%; }
 .rows--tiles .row__name .icn { width: 28px !important; height: 28px !important; }
 .rows--tiles .row__label { font-size: 11px; line-height: 1.2; max-width: 86px; }
+/* Thumbnail swap-in: replaces the kind glyph for image / video tiles
+   when the helper's `thumb` verb succeeds (Phase 7e). Sized to roughly
+   match the kind icon footprint so the rest of the tile doesn't reflow. */
+.rows--tiles .row__thumb {
+  width: 48px; height: 48px; object-fit: cover;
+  border-radius: 4px; background: var(--surface2);
+  flex-shrink: 0;
+}
 .rows--tiles .row__size,
 .rows--tiles .row__mod,
 .rows--tiles .row__kind { display: none; }
@@ -617,3 +747,190 @@ body.is-resizing-col .row, body.is-resizing-row .row { pointer-events: none; }
 .popover__item--active { background: var(--accent-bg); color: var(--accent); }
 .popover__hint { color: var(--text-dim); font-size: 11px; }
 .popover__item--active .popover__hint { color: var(--accent); }
+
+/* ── Frameless chrome (Phase 7a) ─────────────────────────────────── */
+/* The Neutralino window is `borderless: true`; we own the entire chrome.
+   On Win11 22H2+ ([data-mica="on"]) we render a translucent backdrop that
+   gives a Mica-like feel even though Neutralino can't enable real Mica
+   without native HWND access. On older builds we fall back to a flat
+   acrylic blur.
+
+   The 1px outline keeps the frameless window legible against the
+   desktop wallpaper. We use `outline` instead of `border` so the
+   border thickness doesn't subtract from the inner width/height --
+   a 1px border on a 100% box pushes content over by 1px and was
+   clipping scrollbars at the right edge of panes. */
+.a-app, .b-app {
+  outline: 1px solid var(--border);
+  outline-offset: -1px;
+}
+/* Borderless-maximized overscan compensation: when Windows maximizes
+   a borderless window it still applies its WS_THICKFRAME (~8 px on
+   each edge), so the outermost pixels of our content are rendered
+   off-screen. Insetting the app by 8 px when maximized pulls the
+   chrome / panes / status bar back inside the visible area, fixing
+   the missing right-pane scrollbar and the clipped status-bar row. */
+[data-maximized="1"] body { padding: 8px; }
+[data-maximized="1"] .a-app,
+[data-maximized="1"] .b-app {
+  outline: none;
+}
+[data-mica="on"] .a-titlebar,
+[data-mica="on"] .b-topbar {
+  background: color-mix(in srgb, var(--chrome) 70%, transparent);
+  backdrop-filter: blur(40px) saturate(150%);
+  -webkit-backdrop-filter: blur(40px) saturate(150%);
+}
+[data-mica="fallback"] .a-titlebar,
+[data-mica="fallback"] .b-topbar {
+  background: var(--chrome);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+/* Drag-region children that should never trigger window drag. The visual
+   feedback stays as-is; setDraggableRegion checks pointer target tag and
+   skips BUTTON/INPUT, but explicit cursor hints help. */
+[data-drag-region] {
+  -webkit-app-region: drag; /* harmless on WebView2; matches Electron idiom */
+  cursor: default;
+}
+[data-drag-region] button,
+[data-drag-region] input,
+[data-drag-region] kbd,
+[data-drag-region] .dir-switch,
+[data-drag-region] .a-winctl,
+[data-drag-region] .b-winctl,
+[data-drag-region] [data-layout],
+[data-drag-region] [data-view],
+[data-drag-region] [data-act] {
+  -webkit-app-region: no-drag;
+}
+
+/* Cmd window controls — same dimensions as Fluent's so muscle memory
+   carries between directions. */
+.b-wincontrols { display: flex; margin-left: 6px; }
+.b-winctl {
+  width: 36px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10px; color: var(--text-mute); cursor: pointer;
+  border-radius: 4px;
+}
+.b-winctl:hover { background: var(--hover); }
+.b-winctl--close:hover { background: #c42b1c; color: #fff; }
+
+/* ── Recursive search (Phase 7b) ─────────────────────────────────── */
+.search-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 12px;
+  background: var(--accent-bg); border-bottom: 1px solid var(--border-soft);
+  font-size: 11.5px; color: var(--text);
+}
+.search-banner__icon { display: inline-flex; color: var(--accent); }
+.search-banner__text {
+  display: flex; align-items: baseline; gap: 6px;
+  min-width: 0;
+}
+.search-banner__text strong { font-weight: 600; color: var(--text); }
+.search-banner__text small {
+  color: var(--text-mute); font-size: 11px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 320px;
+}
+.search-banner__count {
+  margin-left: auto; color: var(--text-mute); font-variant-numeric: tabular-nums;
+}
+.search-banner__btn {
+  height: 22px; padding: 0 10px;
+  background: transparent; border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text); cursor: pointer; font-size: 11.5px;
+}
+.search-banner__btn:hover { background: var(--hover); }
+.search-banner__btn:disabled { opacity: 0.45; cursor: default; }
+.search-banner__btn:disabled:hover { background: transparent; }
+
+.rows--search .row__name { align-items: flex-start; }
+.rows--search .row__label { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.rows--search .row__sub {
+  display: block; font-size: 10.5px; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 100%; margin-top: 1px;
+}
+
+/* ── Preview pane (Phase 7d) ──────────────────────────────────────── */
+.a-preview-wrap, .b-preview-wrap {
+  display: flex; flex: 0 0 320px; min-width: 240px; max-width: 600px;
+  border-left: 1px solid var(--border); background: var(--bg);
+}
+.preview {
+  flex: 1; display: flex; flex-direction: column; min-width: 0;
+}
+.preview__head {
+  display: flex; align-items: center; gap: 8px;
+  height: 32px; padding: 0 10px;
+  border-bottom: 1px solid var(--border-soft); background: var(--surface);
+  font-size: 11px; color: var(--text-mute); text-transform: uppercase; letter-spacing: .5px;
+}
+.preview__title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; letter-spacing: 0; color: var(--text); font-weight: 500; font-size: 12px; }
+.preview__close {
+  background: transparent; border: none; cursor: pointer; padding: 2px 6px; border-radius: 4px;
+  color: var(--text-mute); display: inline-flex; align-items: center;
+}
+.preview__close:hover { background: var(--hover); color: var(--text); }
+.preview__body { flex: 1; overflow: auto; min-height: 0; }
+
+.preview__empty {
+  display: flex; align-items: center; justify-content: center;
+  height: 100%; padding: 24px; color: var(--text-dim); font-size: 12px;
+}
+
+.preview__meta {
+  display: flex; flex-direction: column; gap: 8px; align-items: center;
+  padding: 24px 16px; text-align: center;
+}
+.preview__icon { display: inline-flex; }
+.preview__name { font-weight: 600; font-size: 13px; color: var(--text); word-break: break-word; }
+.preview__path { font-size: 11px; color: var(--text-dim); word-break: break-all; }
+.preview__hint { font-size: 11px; color: var(--text-mute); margin-top: 4px; }
+.preview__facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 8px 0 0; padding: 0; font-size: 11.5px; }
+.preview__facts dt { color: var(--text-mute); font-weight: 500; text-align: right; margin: 0; }
+.preview__facts dd { color: var(--text); margin: 0; }
+.preview__meta--err .preview__hint { color: #c42b1c; }
+
+.preview__text {
+  margin: 0; padding: 12px;
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  font-size: 11.5px; line-height: 1.5;
+  white-space: pre-wrap; word-break: break-word;
+  color: var(--text); background: var(--bg);
+}
+.preview__img { display: block; max-width: 100%; max-height: 100%; margin: 0 auto; padding: 8px; }
+.preview__pdf { width: 100%; height: 100%; border: none; background: var(--surface); }
+
+.preview__md { padding: 14px 18px; font-size: 13px; line-height: 1.55; color: var(--text); }
+.preview__md h1, .preview__md h2, .preview__md h3, .preview__md h4 {
+  margin: 18px 0 8px; font-weight: 600; color: var(--text);
+}
+.preview__md h1 { font-size: 20px; border-bottom: 1px solid var(--border-soft); padding-bottom: 6px; }
+.preview__md h2 { font-size: 17px; }
+.preview__md h3 { font-size: 14.5px; }
+.preview__md p { margin: 8px 0; }
+.preview__md ul, .preview__md ol { padding-left: 22px; margin: 8px 0; }
+.preview__md li { margin: 2px 0; }
+.preview__md code {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  font-size: 11.5px; background: var(--surface2);
+  padding: 1px 5px; border-radius: 3px; color: var(--text);
+}
+.preview__md-code {
+  background: var(--surface2); border: 1px solid var(--border-soft);
+  border-radius: 6px; padding: 10px 12px; margin: 10px 0;
+  overflow-x: auto;
+}
+.preview__md-code code { background: transparent; padding: 0; font-size: 11.5px; }
+.preview__md a { color: var(--accent); text-decoration: none; }
+.preview__md a:hover { text-decoration: underline; }
+.preview__md strong { font-weight: 600; }
+
+/* Make the body row in both directions stretch the preview pane,
+   keeping the existing grid + sidebar regions sized as before. */
+.a-body, .b-body { align-items: stretch; }
+.iconbtn.on { background: var(--accent-bg); color: var(--accent); }

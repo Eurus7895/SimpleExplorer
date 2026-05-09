@@ -5,6 +5,7 @@
 
 import { iconHTML, kindFor } from './icons.js';
 import * as fs from './fs.js';
+import { getThumbnail, shouldThumbnail } from './thumbnails.js';
 
 const RECENT_KEY = 'simple-explorer.recent';
 const MAX_RECENT = 12;
@@ -184,7 +185,7 @@ export function getRecent() {
 // ── Renderers ──────────────────────────────────────────────────────────
 
 export function renderRows(state, opts = {}) {
-  const { onActivate, onPaneActivate, onRename, onDrop, paneIdx = 0, density = 'normal', accent } = opts;
+  const { onActivate, onPaneActivate, onRename, onDrop, onForeignDrop, paneIdx = 0, density = 'normal', accent } = opts;
   const items = filtered(state);
   const list = document.createElement('div');
   list.className = 'rows';
@@ -195,12 +196,17 @@ export function renderRows(state, opts = {}) {
   const view = state.view || DEFAULT_VIEW;
   if (view === 'compact') list.classList.add('rows--compact');
   else if (view === 'tiles') list.classList.add('rows--tiles');
+  const inSearch = !!(state.search && state.search.results);
+  if (inSearch) list.classList.add('rows--search');
 
   items.forEach((it) => {
     const row = document.createElement('div');
     row.className = 'row';
     row.dataset.name = it.name;
-    row.draggable = true;
+    // Drag + rename are disabled in search-result rows because they would
+    // operate on `pane.path/name` rather than the entry's actual parent
+    // directory, silently doing the wrong thing.
+    row.draggable = !inSearch;
     if (state.selected.has(it.name)) row.classList.add('row--sel');
     if (accent) row.style.setProperty('--row-accent', accent);
 
@@ -234,6 +240,11 @@ export function renderRows(state, opts = {}) {
       requestAnimationFrame(() => label.focus());
       nameCell.innerHTML = iconHTML(kindFor(it));
       nameCell.appendChild(label);
+    } else if (inSearch) {
+      // Search results live in different folders; show the parent path
+      // beneath the name so the user can disambiguate same-named files.
+      const sub = fs.parentPath(it.path) || '';
+      nameCell.innerHTML = `${iconHTML(kindFor(it))}<span class="row__label">${escapeHtml(it.name)}<small class="row__sub">${escapeHtml(sub)}</small></span>`;
     } else {
       nameCell.innerHTML = `${iconHTML(kindFor(it))}<span class="row__label">${escapeHtml(it.name)}</span>`;
     }
@@ -252,6 +263,23 @@ export function renderRows(state, opts = {}) {
 
     row.append(nameCell, sizeCell, modCell, kindCell);
 
+    // Tiles view: swap the kind glyph for a real thumbnail when the
+    // helper is available and the entry is image/video. Async fill -
+    // the kind icon stays visible while the helper runs, so the grid
+    // never blanks during scroll.
+    if (view === 'tiles' && shouldThumbnail(it)) {
+      getThumbnail(it, 96).then((url) => {
+        if (!url) return;
+        const iconEl = nameCell.querySelector('svg.icn');
+        if (!iconEl) return;
+        const img = document.createElement('img');
+        img.className = 'row__thumb';
+        img.src = url;
+        img.alt = '';
+        iconEl.replaceWith(img);
+      }).catch(() => {});
+    }
+
     row.addEventListener('click', (e) => {
       if (e.shiftKey || e.metaKey || e.ctrlKey) {
         if (state.selected.has(it.name)) state.selected.delete(it.name);
@@ -263,6 +291,11 @@ export function renderRows(state, opts = {}) {
       list.querySelectorAll('.row').forEach((r) => {
         r.classList.toggle('row--sel', state.selected.has(r.dataset.name));
       });
+      // Notify the preview pane (and anything else listening for
+      // selection changes) so it can refresh without a full re-render.
+      document.dispatchEvent(new CustomEvent('explorer:select-change', {
+        detail: { paneIdx },
+      }));
     });
 
     row.addEventListener('dblclick', () => {
@@ -313,7 +346,13 @@ export function renderRows(state, opts = {}) {
   if (!items.length) {
     const empty = document.createElement('div');
     empty.className = 'rows__empty';
-    empty.textContent = state.filter ? 'No matches' : (state.loading ? 'Loading…' : 'Empty');
+    if (inSearch) {
+      empty.textContent = state.search.progress?.done
+        ? `No matches for "${state.search.query}"`
+        : 'Searching…';
+    } else {
+      empty.textContent = state.filter ? 'No matches' : (state.loading ? 'Loading…' : 'Empty');
+    }
     list.appendChild(empty);
   }
 
@@ -330,36 +369,67 @@ export function renderRows(state, opts = {}) {
   });
 
   // Counter avoids flicker as dragover crosses child elements.
+  // Two drop sources are accepted: another SimpleExplorer pane (DND_TYPE
+  // payload) and stock Windows Explorer (text/uri-list, the OS standard).
+  // Foreign in-app drops (e.g. from a browser) without a uri-list aren't
+  // wired in v1.
   let dragDepth = 0;
+  const isInternal = (e) => activeDrag && activeDrag.srcIdx !== paneIdx && e.dataTransfer.types.includes(DND_TYPE);
+  const isForeign = (e) => !activeDrag && e.dataTransfer.types.includes('text/uri-list');
   list.addEventListener('dragenter', (e) => {
-    if (!activeDrag || activeDrag.srcIdx === paneIdx) return;
-    if (!e.dataTransfer.types.includes(DND_TYPE)) return;
+    if (!isInternal(e) && !isForeign(e)) return;
     dragDepth += 1;
     list.classList.add('rows--drop');
   });
   list.addEventListener('dragover', (e) => {
-    if (!activeDrag || activeDrag.srcIdx === paneIdx) return;
-    if (!e.dataTransfer.types.includes(DND_TYPE)) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = dndOp(e, activeDrag.srcPath, state.path);
+    if (isInternal(e)) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = dndOp(e, activeDrag.srcPath, state.path);
+      return;
+    }
+    if (isForeign(e)) {
+      e.preventDefault();
+      // Source path is unknown until drop — bias toward copy (the safe
+      // default) and let Shift force move. dndOp's same-drive check
+      // can't run here because dataTransfer values are hidden during
+      // dragover.
+      e.dataTransfer.dropEffect = e.shiftKey ? 'move' : 'copy';
+    }
   });
   list.addEventListener('dragleave', () => {
-    if (!activeDrag || activeDrag.srcIdx === paneIdx) return;
+    if (!activeDrag && dragDepth === 0) return;
     dragDepth -= 1;
     if (dragDepth <= 0) { dragDepth = 0; list.classList.remove('rows--drop'); }
   });
   list.addEventListener('drop', (e) => {
-    if (!activeDrag || activeDrag.srcIdx === paneIdx) return;
-    const raw = e.dataTransfer.getData(DND_TYPE);
-    if (!raw) return;
-    e.preventDefault();
-    dragDepth = 0;
-    list.classList.remove('rows--drop');
-    let payload;
-    try { payload = JSON.parse(raw); } catch { return; }
-    const op = dndOp(e, payload.srcPath, state.path);
-    onDrop?.(payload.srcIdx, payload.names, op);
-    activeDrag = null;
+    if (isInternal(e)) {
+      const raw = e.dataTransfer.getData(DND_TYPE);
+      if (!raw) return;
+      e.preventDefault();
+      dragDepth = 0;
+      list.classList.remove('rows--drop');
+      let payload;
+      try { payload = JSON.parse(raw); } catch { return; }
+      const op = dndOp(e, payload.srcPath, state.path);
+      onDrop?.(payload.srcIdx, payload.names, op);
+      activeDrag = null;
+      return;
+    }
+    if (isForeign(e)) {
+      e.preventDefault();
+      dragDepth = 0;
+      list.classList.remove('rows--drop');
+      const uriList = e.dataTransfer.getData('text/uri-list');
+      const paths = fs.parseUriList(uriList);
+      if (!paths.length) return;
+      // Same-drive check on first source — assumes a uniform drag (Explorer
+      // doesn't mix drives in a single drag).
+      const op = e.ctrlKey ? 'copy'
+        : e.shiftKey ? 'move'
+        : fs.sameDrive(paths[0], state.path) ? 'move'
+        : 'copy';
+      onForeignDrop?.(paths, op);
+    }
   });
 
   return list;
@@ -369,6 +439,43 @@ export function renderRows(state, opts = {}) {
 // selection or when only folders are selected; suffixes "(files only)"
 // when a folder is selected alongside files (folder size needs a
 // recursive walk we don't do).
+// Banner shown above the rows list when a recursive search is active.
+// Renders inline status (matches / scanned / done|aborted|capped) plus
+// Cancel + Clear actions. Returns null when there's no active search,
+// so callers can `if (banner) card.appendChild(banner)`.
+export function renderSearchBanner(state, { onCancel, onClear }) {
+  if (!state.search) return null;
+  const banner = document.createElement('div');
+  banner.className = 'search-banner';
+  const p = state.search.progress || { matched: 0, scanned: 0, done: false };
+  const status = p.aborted
+    ? 'cancelled'
+    : p.capped
+      ? 'first 5000 results'
+      : p.done
+        ? 'done'
+        : 'searching…';
+  banner.innerHTML = `
+    <span class="search-banner__icon">${iconHTML('search', 13)}</span>
+    <span class="search-banner__text">
+      <strong>${escapeHtml(state.search.query)}</strong>
+      <small>in ${escapeHtml(state.search.root)}</small>
+    </span>
+    <span class="search-banner__count">${p.matched} match${p.matched === 1 ? '' : 'es'} · ${status}</span>
+    <button class="search-banner__btn" data-act="cancel" ${p.done ? 'disabled' : ''}>Cancel</button>
+    <button class="search-banner__btn" data-act="clear">Clear</button>
+  `;
+  banner.querySelector('[data-act="cancel"]').addEventListener('click', (e) => {
+    e.stopPropagation();
+    onCancel?.();
+  });
+  banner.querySelector('[data-act="clear"]').addEventListener('click', (e) => {
+    e.stopPropagation();
+    onClear?.();
+  });
+  return banner;
+}
+
 export function selectionSizeLabel(pane) {
   if (!pane.selected.size) return '';
   let bytes = 0;
@@ -385,6 +492,11 @@ export function selectionSizeLabel(pane) {
 }
 
 export function filtered(state) {
+  // Recursive-search mode short-circuits the normal entries list.
+  // Results stream in from search.js; we render whatever has arrived.
+  if (state.search && state.search.results) {
+    return state.search.results;
+  }
   const sorted = sortedEntries(state);
   if (!state.filter) return sorted;
   const q = state.filter.toLowerCase();
@@ -499,6 +611,7 @@ const CURATED_ITEMS = [
   { label: 'Open in Terminal',  act: 'terminal', dirOnly: true },
   null,
   { label: 'Copy path',         act: 'copyPath' },
+  { label: 'Drag out to OS…',   act: 'dragOut' },
   { label: 'Rename',            act: 'rename', kbd: 'F2' },
   { label: 'Delete',            act: 'delete', kbd: 'Del' },
   null,

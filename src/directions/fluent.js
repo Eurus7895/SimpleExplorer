@@ -4,10 +4,13 @@
 // Visuals trace explorer-fluent.jsx in the design bundle.
 
 import { iconHTML } from '../icons.js';
-import { renderRows, renderColumnHeader, renderBreadcrumb, getRecent, selectionSizeLabel } from '../pane.js';
+import { renderRows, renderColumnHeader, renderBreadcrumb, getRecent, selectionSizeLabel, renderSearchBanner } from '../pane.js';
 import { SIDEBAR_FULL } from '../sidebar-data.js';
 import { applyLayout } from '../layout.js';
 import { openPalette, isPaletteOpen } from '../palette.js';
+import { ensurePreviewPanel, bindPreviewClose, showPreviewFor } from '../preview.js';
+import { renderTree } from '../tree.js';
+import { renderTerminal, isTerminalOpen, toggleTerminal } from '../terminal.js';
 
 const LAYOUT_OPTS = [
   { id: '1',  icn: 'one',       title: 'Single' },
@@ -32,13 +35,36 @@ export function renderFluent(root, ctx) {
   applyLayout(grid, ctx.layout, ctx.splits, cards, ctx.onSplitChange);
 
   body.appendChild(grid);
+  if (ctx.previewOpen) {
+    const previewWrap = el('div', 'a-preview-wrap');
+    ensurePreviewPanel(previewWrap);
+    bindPreviewClose(() => ctx.onPreviewToggle());
+    body.appendChild(previewWrap);
+    queueMicrotask(() => ctx.pushPreview?.(ctx.activePane));
+  }
   app.appendChild(body);
+
+  // Integrated terminal (Phase 7g) — bottom panel, Fluent direction.
+  // Same module as Cmd; the styling adapts via the shared .term* rules.
+  if (isTerminalOpen()) {
+    const termWrap = el('div', 'a-term-wrap');
+    const activePane = ctx.panes[ctx.activePane];
+    renderTerminal(termWrap, {
+      onClose: () => { toggleTerminal(); ctx.rerender?.(); },
+      panePath: activePane?.path,
+    });
+    app.appendChild(termWrap);
+  }
+
   app.appendChild(statusBar(ctx));
   root.appendChild(app);
 }
 
 function titleBar(ctx) {
   const bar = el('div', 'a-titlebar');
+  bar.dataset.dragRegion = '';
+  const maxIcon = ctx.maximized ? '❐' : '☐';
+  const maxTitle = ctx.maximized ? 'Restore' : 'Maximize';
   bar.innerHTML = `
     <div class="a-brand">
       <div class="a-brand__logo"></div>
@@ -51,12 +77,18 @@ function titleBar(ctx) {
     </button>
     <div class="a-wincontrols">
       <span class="a-winctl" data-winctl="min" title="Minimize">─</span>
-      <span class="a-winctl a-winctl--disabled" title="Use the OS title bar to maximize (frameless mode lands in Phase 7)">☐</span>
+      <span class="a-winctl" data-winctl="max" title="${maxTitle}">${maxIcon}</span>
       <span class="a-winctl a-winctl--close" data-winctl="close" title="Close">✕</span>
     </div>
   `;
   bindClicks(bar, ctx);
   bindWinCtl(bar, ctx);
+  // Double-click toggles max (Win11 convention). Skip if a button was the
+  // target so the click doesn't double-fire with single-click maximize.
+  bar.addEventListener('dblclick', (e) => {
+    if (e.target.closest('.a-winctl, .iconbtn, .dir-switch')) return;
+    ctx.onWinCtl('max');
+  });
   return bar;
 }
 
@@ -79,6 +111,8 @@ function commandBar(ctx) {
       <kbd>Ctrl K</kbd>
     </div>
     <div class="spacer"></div>
+    <button class="iconbtn ${isTerminalOpen() ? 'on' : ''}" data-act="terminalToggle" title="Toggle terminal (Ctrl+\`)">${iconHTML('terminal', 14)}</button>
+    <button class="iconbtn ${ctx.previewOpen ? 'on' : ''}" data-act="previewToggle" title="Toggle preview pane (Ctrl+P)">${iconHTML('eye', 14)}</button>
     ${layoutPicker(ctx)}
     <span class="a-sep"></span>
     ${viewPicker(ctx)}
@@ -93,6 +127,31 @@ function commandBar(ctx) {
 
 function sidebar(ctx) {
   const side = el('div', 'a-sidebar');
+  // Mode tabs at the top: Quick access (existing) / Tree (Phase 7f).
+  const tabBar = el('div', 'a-sidebar__tabs');
+  const mode = ctx.sidebarMode || 'quick';
+  ['quick', 'tree'].forEach((m) => {
+    const b = el('button', 'a-sidebar__tab' + (mode === m ? ' a-sidebar__tab--on' : ''));
+    b.textContent = m === 'quick' ? 'Quick access' : 'Tree';
+    b.addEventListener('click', () => ctx.onSidebarModeChange(m));
+    tabBar.appendChild(b);
+  });
+  side.appendChild(tabBar);
+
+  if (mode === 'tree') {
+    const treeWrap = el('div', 'a-sidebar__tree');
+    const roots = (ctx.drives.length
+      ? ctx.drives.map((d) => ({ label: d.name, path: d.path }))
+      : [{ label: 'Home', path: ctx.home }]);
+    renderTree(treeWrap, {
+      roots,
+      activePath: ctx.panes[ctx.activePane]?.path,
+      onNavigate: (p) => ctx.onPaneNav(ctx.activePane, p),
+    });
+    side.appendChild(treeWrap);
+    return side;
+  }
+
   SIDEBAR_FULL.forEach((sec) => {
     const block = el('div', 'a-sidebar__block');
     const title = el('div', 'a-sidebar__title');
@@ -139,6 +198,16 @@ function sidebar(ctx) {
 function paneCard(ctx, pane, i) {
   const card = el('div', 'a-pane' + (i === ctx.activePane ? ' a-pane--active' : ''));
   card.dataset.paneIdx = i;
+  // Programmatic focus target. tabindex -1 keeps the card out of the
+  // Tab order but lets us call card.focus() on click so keyboard goes
+  // here rather than back to the terminal input.
+  card.tabIndex = -1;
+  card.addEventListener('mousedown', () => {
+    // Take focus on mousedown (before click) so the terminal blur
+    // happens before any selection logic runs. preventScroll stops
+    // the WebView from jump-scrolling on focus change.
+    card.focus({ preventScroll: true });
+  });
   card.addEventListener('click', () => ctx.setActivePane(i));
 
   card.appendChild(tabBar(ctx, pane, i));
@@ -156,12 +225,19 @@ function paneCard(ctx, pane, i) {
     card.appendChild(head);
   }
 
+  const banner = renderSearchBanner(pane, {
+    onCancel: () => ctx.onCancelSearch(i),
+    onClear: () => ctx.onClearSearch(i),
+  });
+  if (banner) card.appendChild(banner);
+
   const rows = renderRows(pane, {
     paneIdx: i,
     onActivate: (entry) => ctx.onActivateEntry(i, entry),
     onPaneActivate: () => ctx.setActivePane(i),
     onRename: (oldName, newName) => ctx.onRename(i, oldName, newName),
     onDrop: (srcIdx, names, op) => ctx.onDrop(srcIdx, i, names, op),
+    onForeignDrop: (paths, op) => ctx.onForeignDrop(i, paths, op),
   });
   card.appendChild(rows);
   return card;

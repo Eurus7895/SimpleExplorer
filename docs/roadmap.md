@@ -5,13 +5,18 @@ state lives in [`design.md`](./design.md); repository conventions live
 in [`../CLAUDE.md`](../CLAUDE.md). This file is the source of truth for
 **what's painted but not wired**, and **what hasn't been started**.
 
-Status as of the last commit on `claude/review-roadmap-MKEpx`:
-post-MVP, pre-v1. Phases 1, 1.5, 2, 3, 4, 5, and 6a (Quick UX
-wins + Cmd rail redesign) have shipped. The Workspace direction
-has been removed; the remaining directions are Fluent (A) and
-Cmd (B). Remaining work: pane-activation refactor + drag-and-drop
-in Phase 6, and the Phase 7 deferred features (tree view,
-recursive search, integrated terminal, …).
+Status as of the Phase 7 branch (`feat/phase-7`):
+post-MVP, pre-v1. Phases 1, 1.5, 2, 3, 4, 5, 6a, 6b, and 7
+have shipped. The Workspace direction has been removed; the
+remaining directions are Fluent (A) and Cmd (B). Remaining
+work: the **Phase 8 polish + scaling pass** (big-dir listing
+perf, tree virtualization, real PTY-backed terminal, copy/move
+progress + conflict UI, selection keyboard ergonomics, and
+in-app dialogs to replace the native `prompt()` / `confirm()`
+that breaks the Mica chrome), the **Phase 9 Crew (Copilot CLI)
+integration** (shell out to the `crew` binary so users can ask
+natural-language questions about the file they're looking at),
+and the items in [Open questions / debt](#open-questions--debt).
 
 ## Shipped
 
@@ -488,66 +493,487 @@ background while a foreign drag is over the destination pane;
 an enter/leave depth counter avoids flicker as the cursor
 crosses child elements.
 
-### Phase 7 — Larger features (deferred, design needed)
+### Phase 7 — Larger features (sequenced)
 
-These need their own short plan before starting; rough cost in days.
+The flat list of "deferred" Phase 7 items is now broken into seven
+sub-phases (7a–7g), ordered cheapest-and-most-visible first,
+helper-dependent work batched together, terminal last because it is
+the largest single bet. Total ~14–16 days. Each sub-phase ships on
+its own `feat/phase-7…` branch off `origin/main` with a single
+commit per CLAUDE.md's branch policy.
 
-- **Tree view** in the sidebar (~2 days) — virtualized tree over real FS,
-  expand/collapse, persist expansion state.
-- **Recursive search** (~2 days) — background walk, cancellation, results
-  pane, hit highlighting.
-- **Native Windows shell context menu** — *promoted to Phase 1.5*.
-- **Mica + frameless chrome** (~1 day) — `borderless: true` in
-  `neutralino.config.json`, custom title-bar component, hit-testing for
-  drag region; matches Direction A's design intent.
-- **Thumbnails** (~3 days) — async generation via Shell COM
-  (`IShellItemImageFactory::GetImage`), in-memory LRU cache, fallback
-  to kind icons. Requires the helper exe.
-- **File preview pane** (~2 days) — text / image / PDF / md preview;
-  separate column, toggleable.
-- **Integrated terminal in Direction B** (~3–5 days) — VS Code-style
-  bottom panel with a real terminal emulator. Cmd direction only; the
-  Fluent skin keeps the existing right-click "Open in Terminal" external
-  spawn. Stack:
-  - Frontend: [`xterm.js`](https://xtermjs.org/) (same emulator VS Code
-    uses), rendered into a resizable bottom panel below `b-grid`.
-    Toggleable via Ctrl+\` and a rail icon. Multiple terminals as tabs.
-  - Backend: a new native helper verb `pty` that wraps the Windows
-    [ConPTY](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session)
-    APIs (`CreatePseudoConsole`, `ResizePseudoConsole`,
-    `ClosePseudoConsole`). Spawns the user's chosen shell under the
-    PTY and pipes bytes both ways. Lives in `tools/shellhelp.cpp`
-    alongside the existing verbs to keep the toolchain story unchanged.
-  - Shell selection (matches VS Code): on first launch, detect available
-    shells in PATH (`pwsh.exe` → `powershell.exe` → `cmd.exe` →
-    `bash.exe` from Git for Windows → WSL), present a one-time
-    quick-pick overlay, and persist the chosen shell to
-    `localStorage` under `simple-explorer.terminal.shell`. Settings
-    UI later allows changing the default and adding profiles.
-  - Working directory (matches VS Code): when a new terminal is
-    opened, its cwd is the active pane's current path at that
-    moment. Once opened, terminals do **not** auto-`cd` when the
-    active pane navigates — they're independent. Add a right-click
-    "Open in integrated terminal" action on folders that opens a
-    new terminal tab at that path (mirrors VS Code's command).
-  - IPC: bidirectional bytes between JS and the helper. Neutralino's
-    `os.spawnProcess` + `events.on('spawnedProcess', …)` carries
-    stdout/stderr in chunks; for stdin we use `os.updateSpawnedProcess`.
-    Resize events flow as JSON control messages on a sentinel-prefixed
-    line.
-  - Out of scope for v1: split terminals inside the panel, search,
-    profile UI beyond the first-launch picker, restoring sessions
-    across app restarts.
-  - Risks: ConPTY's escape-sequence translation is good but imperfect
-    (some TUI apps still misbehave on resize); Neutralino's chunked
-    output may need a 16 ms flush coalesce to avoid tearing. Cheap
-    fallback for environments without ConPTY (Windows < 1809): plain
-    `os.spawnProcess` of the shell with no PTY semantics — works for
-    line-oriented commands, breaks for vim/less.
-- **Drag-and-drop with the OS** (~2 days) — accept drops from stock
-  Explorer (HTML5 dataTransfer to FS path resolution), drag from our
-  panes back out (Neutralino currently can't initiate OS drags — needs
-  a native helper).
+Summary:
+
+| Sub-phase | Feature | Size | Helper? | Risk |
+| --- | --- | --- | --- | --- |
+| 7a | Mica + frameless chrome | 1d | no | low |
+| 7b | Recursive search | 2d | no | low |
+| 7c | OS DnD (drop side) | 1d | no | low |
+| 7d | File preview pane (text/img/md/PDF) | 2d | no | low |
+| 7e | Thumbnails + DnD egress (helper batch) | 3d | **yes** (new verbs) | med |
+| 7f | Tree view | 2d | no | med (layout) |
+| 7g | Integrated terminal | 3–5d | **yes** (ConPTY verb) | high |
+
+#### 7a — Mica + frameless chrome (~1 day)
+
+Smallest, most-visible, no helper / FS work. Closes the gap with
+Direction A's design intent.
+
+- Set `borderless: true` in `neutralino.config.json`.
+- Custom title-bar component in `src/directions/fluent.js` with
+  `Neutralino.window.setDraggableRegion` for the drag area; existing
+  `─ ☐ ✕` controls stay (already wired in Phase 1).
+- Apply Mica via WebView2's backdrop hint where available
+  (`Neutralino.window.setMicaEffect()` if exposed; otherwise CSS
+  acrylic/blur fallback for older Windows builds and non-Win11).
+- Risk: Mica needs Win11 22H2+. Detect at runtime via `NL_OS` /
+  build number; degrade to flat acrylic gracefully.
+
+#### 7b — Recursive search (~2 days)
+
+Pure JS over `Neutralino.filesystem.readDirectory`. Slots into the
+existing palette (Cmd) and search input (Fluent). No helper work.
+
+- New `src/search.js` with a cancellable async walker:
+  BFS queue, chunked yields (~16 ms slice budget), AbortController
+  for cancel. Skips reparse points and obvious noise (`node_modules`,
+  `.git`) only when explicitly opted in via a settings toggle —
+  default is "search everything visible".
+- Cmd palette: when query has no `>`, `/`, `\`, or `<X>:` prefix and
+  there's an active pane, palette flips to a "Search inside <pane
+  path>…" mode after Enter.
+- Fluent: existing `.searchInput` already filters visible rows on
+  type; add Enter to escalate to a recursive walk. A new results
+  view replaces the rows grid until cleared (Esc / clear button).
+- Filename match only in v1 (substring, locale-aware,
+  case-insensitive). Hit highlighting via a wrapper span around the
+  matched substring.
+- Cancel triggers: new keystroke, pane navigation, Esc, switching
+  directions, switching panes.
+- Out of scope: content search, regex, glob include/exclude UI.
+
+#### 7c — OS DnD drop side (~1 day)
+
+Receive drops from stock Explorer. The egress half (drag *out* of
+SimpleExplorer) needs the native helper and is deferred to 7e.
+
+- Wire `dragenter` / `dragover` / `drop` on the rows container in
+  `src/pane.js` (already partially in place from 6b.2 for in-app
+  drags).
+- Read `dataTransfer.types`; when `Files` or `text/uri-list` is
+  present, treat as a foreign drop and route through the existing
+  `ctx.onDrop()` from 6b.2 with copy as the default and Shift = move.
+- Drive-letter compare via `fs.sameDrive` decides cursor (already
+  exists from 6b.2).
+- Visual cue reuses the `.rows--drop` accent ring from 6b.2.
+- Egress (dragging files *from* SimpleExplorer into Explorer)
+  intentionally deferred — needs `DoDragDrop` in the helper. See 7e.
+
+#### 7d — File preview pane (~2 days, includes PDF + markdown)
+
+Right-side toggleable preview pane. No helper work. Establishes the
+side-panel layout we'll reuse for thumbnails.
+
+- New right-side pane in `src/directions/fluent.js` and
+  `src/directions/cmd.js`, ~320 px default width, draggable splitter
+  reusing `applyLayout`'s gutter mechanic. Toggleable via `Ctrl+P`
+  and a Fluent command-bar button / Cmd rail icon. Persist toggle
+  state per direction under `settings.preview.open`.
+- New `src/preview.js` dispatch:
+  - **Text** (`.txt`, `.json`, `.yaml`, `.toml`, `.ini`, `.log`,
+    `.csv`, source files): chunked read, first 1 MB, monospace.
+  - **Image** (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`,
+    `.ico`): `<img src="file:///…">`.
+  - **Markdown** (`.md`): rendered HTML via a tiny inlined
+    markdown-it (or hand-rolled CommonMark subset — heading, bold,
+    italic, code, lists, links, images). Sandboxed (no script
+    execution); links open via `Neutralino.os.open`.
+  - **PDF** (`.pdf`): rendered via [`pdf.js`](https://mozilla.github.io/pdf.js/)
+    embedded as a vendored `extras/pdfjs/` (or via the Mozilla CDN
+    behind `Neutralino.extensions` if offline use isn't required).
+    First-page render only in v1; pager controls deferred.
+  - **Other** (binary / unknown): kind icon + size + modified date.
+- Updates on selection change in the active pane (debounced 80 ms
+  to avoid thrash during arrow-key navigation).
+- Out of scope for v1: video / audio playback, syntax highlighting,
+  diff view, multi-page PDF navigation.
+
+#### 7e — Native helper batch: thumbnails + DnD egress (~3 days)
+
+Both need new C++ verbs in `tools/shellhelp.cpp`; batched to share
+build/test cycles.
+
+- **Thumbnails** (`thumb` verb): `IShellItemImageFactory::GetImage`
+  → emits PNG bytes on stdout (or a small temp file path printed to
+  stdout for cleanliness; helper deletes on exit).
+  - JS-side LRU keyed `path|mtime|requestedSize`; default cache 256
+    entries, evict oldest. Tiles view consumes first; details view
+    keeps kind icons (perf).
+  - Async fill pattern from Phase 1.5 (curated first, helper fills
+    in) — render kind icon synchronously, replace with thumb when
+    helper returns.
+  - Fallback: when helper missing, return early — kind icons stay.
+- **DnD egress** (`dragout` verb): construct an `IDataObject` with
+  `CF_HDROP` for the selected paths and call `DoDragDrop` with
+  `DROPEFFECT_COPY | DROPEFFECT_MOVE`. The helper blocks while the
+  user holds the mouse; on drop it returns the chosen effect on
+  stdout so JS can decide whether to refresh the source pane.
+  - JS triggers via `os.execCommand` on `dragstart` when the cursor
+    is moving toward outside the app window. Detection heuristic:
+    if `dragend` fires with `dataTransfer.dropEffect === 'none'` and
+    the cursor is outside the window bounds, escalate to helper.
+    (Cleaner alternative: always escalate; HTML5 in-app DnD from
+    6b.2 stops working — too disruptive. Stick with the heuristic.)
+- `tools/build.md` updated with the new verbs.
+- `docs/design.md` "Native helpers" table extended.
+
+#### 7f — Tree view (~2 days)
+
+Sidebar tree of folders rooted at drives. Virtualized so 50 k+ node
+trees stay snappy.
+
+- New `src/tree.js`: windowed render — only the rows currently
+  inside the scroll viewport are present in the DOM, padded with a
+  spacer above/below to preserve scrollbar geometry. Row height
+  fixed (24 px) so virtualization math stays trivial.
+- Expand / collapse persists to `simple-explorer.tree.expanded` (set
+  of paths). Lazy-loads children on first expand.
+- Click a node = navigate the active pane to that folder.
+  Right-click = same context menu as a row (curated + shell extensions
+  via `helperMenu`).
+- Sidebar gains a tab-style switcher between Tree / Quick access.
+  Default keeps quick access (current behavior); user opt-in to tree.
+- Risk: large drives / network shares can stall on initial
+  enumeration. Mitigation: `readDirectory` per node is already
+  async; show a spinner per row.
+
+#### 7g — Integrated terminal in Direction B (~3–5 days)
+
+Largest, riskiest single feature. Cmd direction only; the Fluent
+skin keeps "Open in Terminal" as an external spawn.
+
+- **Frontend:** [`xterm.js`](https://xtermjs.org/) (same emulator
+  VS Code uses) rendered into a resizable bottom panel below
+  `b-grid`. Toggleable via `Ctrl+\`` and a Cmd rail icon. Multiple
+  terminals as tabs.
+- **Backend:** new `pty` verb in `tools/shellhelp.cpp` wrapping
+  the Windows [ConPTY](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session)
+  APIs (`CreatePseudoConsole`, `ResizePseudoConsole`,
+  `ClosePseudoConsole`). Spawns the chosen shell under the PTY and
+  pipes bytes both ways.
+- **Shell selection** (matches VS Code): on first launch, detect
+  shells in PATH (`pwsh.exe` → `powershell.exe` → `cmd.exe` →
+  Git Bash → WSL); one-time quick-pick overlay; persist to
+  `simple-explorer.terminal.shell`.
+- **Working directory** (matches VS Code): new terminals open at
+  the active pane's current path; thereafter independent — they do
+  not follow pane navigation. Folder right-click gains "Open in
+  integrated terminal".
+- **IPC:** bidirectional bytes via `Neutralino.os.spawnProcess` +
+  `events.on('spawnedProcess', …)`; stdin via
+  `os.updateSpawnedProcess`. Resize events flow as JSON control
+  messages on a sentinel-prefixed line.
+- **Out of scope (v1):** split terminals, search, profile UI beyond
+  the first-launch picker, session restore across app restarts.
+- **Risks:** ConPTY escape-sequence translation imperfect (some
+  TUI apps misbehave on resize); chunked output may need a 16 ms
+  flush coalesce. Cheap fallback for Windows < 1809: plain
+  `os.spawnProcess` without PTY semantics — works for line-oriented
+  commands, breaks for vim/less.
+
+### Phase 8 — Polish, scaling, real terminal (sequenced)
+
+Where Phase 7 was a feature-breadth push, Phase 8 is the cleanup
+and scaling pass. Five sub-phases, total ~10.5 days. Ordered by
+user impact: 8a fixes the only place the app feels visibly slow,
+8b unlocks the deferred terminal upgrade, 8c stops silent
+data-overwrite footguns, 8d closes the keyboard-ergonomics gap,
+8e replaces the WebView2-native `prompt()` / `confirm()` dialogs
+that break the Mica chrome whenever the user clicks New / Delete.
+
+| Sub-phase | Theme | Size | Helper? | Risk |
+| --- | --- | --- | --- | --- |
+| 8a | Listing perf + tree virtualization | 2d | no | low |
+| 8b | Helper rebuild + ConPTY + xterm.js | 4d | **yes** (new `pty` verb) | high |
+| 8c | Copy/move polish: progress, conflict, cancel | 2d | no | med |
+| 8d | Selection keyboard ergonomics | 1d | no | low |
+| 8e | In-app dialogs for command-bar buttons | 1.5d | no | low |
+
+#### 8a — Listing perf + tree virtualization (~2 days)
+
+Two related "things slow down on big trees" fixes, batched.
+
+- **Big-directory listing.** `fs.listDir` currently does
+  `Promise.all` over `getStats` for every entry. On a 10 k-file
+  folder that's 10 k Neutralino IPC round-trips — visibly slow
+  (10+ s on cold cache). Fix: skip per-file stat on first paint,
+  emit name + is_dir + extension directly from `readDirectory`
+  results, then fill in size + modified asynchronously per
+  visible row (or per the active sort key). Falls back to the
+  current eager path when the entry count is small (~< 200) so
+  small-folder navigation stays instant.
+- **Tree virtualization.** Phase 7f rendered every visible node;
+  `src/tree.js` ships unvirtualized by design. Replace the inner
+  list rendering with a windowed view: fixed row height (24 px),
+  spacers above/below to preserve scroll geometry, only the
+  rows in the current viewport ± 8-row buffer are in DOM.
+  Works because expanded children are already eagerly fetched —
+  we're just gating DOM creation on visibility.
+- Out of scope: lazy-load row stats inside the *tree* (it only
+  shows folder names, no size/modified). Just the directory pane.
+
+#### 8b — Helper rebuild + ConPTY + xterm.js (~4 days)
+
+The promised real terminal upgrade. Phase 7g shipped a
+line-oriented stub that breaks for vim / less / top; this phase
+delivers the proper PTY-backed terminal.
+
+- **Helper rebuild.** `extras/shellhelp.exe` needs a fresh
+  Windows MSVC pass to pick up the `thumb` + `dragout` verbs from
+  Phase 7e *and* the new `pty` verb landing here. Ship the
+  rebuild as part of this phase so 7e and 8b light up together.
+- **`pty` helper verb.** `tools/shellhelp.cpp` gains a ConPTY
+  wrapper: `CreatePseudoConsole`, `ResizePseudoConsole`,
+  `ClosePseudoConsole`. Spawns the chosen shell under the PTY,
+  forwards bytes both ways via stdin/stdout, accepts JSON
+  control messages on a sentinel-prefixed stdin line for resize.
+- **xterm.js renderer.** Vendor xterm.js into `extras/xterm/`
+  (no CDN — the app must work offline). Replace `src/terminal.js`
+  v1's `<pre>` + input pair with an xterm.js Terminal mounted
+  in `.term__body`. Bytes from the helper feed `term.write(buf)`;
+  user keystrokes feed `term.onData(d => helper.stdin.write(d))`.
+- **Resize plumbing.** `ResizeObserver` on the panel computes
+  cols/rows from `term.cols / term.rows`, sends a JSON resize
+  message to the helper, helper calls `ResizePseudoConsole`.
+- **Fallback.** Keep the line-oriented v1 path behind a
+  `settings.terminal.usePty: false` toggle so users on
+  Windows < 1809 (no ConPTY) or with a missing helper still get
+  the v1 experience. Auto-detect at first launch.
+- **Risks.** ConPTY's escape-sequence translation is imperfect;
+  xterm.js's chunked-write performance under burst output may
+  need a 16 ms flush coalesce. xterm.js bundle is ~200 KB —
+  acceptable but the largest single dep we'll have shipped.
+
+#### 8c — Copy/move polish: progress, conflict, cancel (~2 days)
+
+Today a multi-GB drag silently blocks the UI; a same-name drop
+silently overwrites; there's no cancel. All three are foot-guns
+on real-Windows usage.
+
+- **Progress overlay.** A small toast/strip at the bottom of the
+  active pane shows N of M items copied/moved with a byte
+  progress bar. Wired into both internal pane DnD and foreign
+  Explorer-drop paths (the `onDrop` / `onForeignDrop` handlers in
+  `app.js`). The strip is dismissible and auto-fades on
+  completion.
+- **Conflict resolution.** When the destination already has a
+  same-named entry, raise a small modal: Skip / Replace / Keep
+  Both (auto-rename to `name (2).ext`) / Cancel. "Apply to all"
+  checkbox to handle large batches. Default action: Skip
+  (safest); Enter binds to the highlighted button.
+- **Cancellation.** Each in-flight operation gets an
+  AbortController; the progress strip's × button signals it. The
+  copy loop checks the signal between files. Partial state is
+  left as-is (no rollback in v1) — the user can finish manually.
+- Out of scope: pause/resume, post-completion "show in Explorer"
+  hint, copy-to-clipboard-then-paste flow (separate phase).
+
+#### 8d — Selection keyboard ergonomics (~1 day)
+
+The selection model (`pane.selected: Set<string>`) supports
+multi-select via Ctrl/Shift+click but has no keyboard shortcuts.
+Closes the gap with stock Explorer.
+
+- `Ctrl+A` selects every visible row in the active pane.
+- `Shift+ArrowDown` / `Shift+ArrowUp` extend the selection from
+  the anchor (last single-clicked row) one row at a time. Track
+  `pane.selectionAnchor` so a fresh single-click resets it.
+- `Home` / `End` move the focused row to first / last visible;
+  `Shift+Home` / `Shift+End` extend the selection there.
+- `Ctrl+Click` toggles individual rows (already works via the
+  click handler) — no change, just verify it.
+- All of this respects the focus-zone gate from the recent fix:
+  shortcuts only fire when the active pane card has focus, not
+  when the terminal does.
+- Out of scope: rubber-band select (drag-to-select rectangle) —
+  bigger UX change, separate phase.
+
+#### 8e — In-app dialogs for command-bar buttons (~1.5 days)
+
+The command bar's New / Copy / Rename / Delete / Compare /
+"Drag out…" actions currently route through `prompt()` and
+`confirm()` -- the WebView2 native dialogs. They show as
+`127.0.0.1:58681 says…` chrome that breaks the Mica frameless
+look completely (see Phase 7a's design intent), can't be themed,
+and lock the entire app while open. Replace with in-app modals
+that match the chrome.
+
+- **`src/modal.js` (new):** small overlay primitive --
+  `prompt({ title, label, value, validate })`,
+  `confirm({ title, body, danger })`, and `choose({ title, body,
+  options })` for multi-button cases. Returns Promises so callers
+  stay async-await-shaped. Single-instance (re-opening tears down
+  the previous overlay), Esc cancels, Enter submits, click-outside
+  cancels (or doesn't, when `danger: true`).
+- **Wire each command-bar action through it.** `app.js` doAction
+  cases swap their `prompt()` / `confirm()` for the new
+  primitive. The `New folder` action gets validation against
+  invalid Win32 chars (`<>:"/\\|?*`), already-exists collision
+  check, and a default-suggested name (`New folder`,
+  `New folder (2)`, …) that's pre-selected so Enter accepts.
+- **Trash confirm copy.** Today's `Move N item(s) to Recycle
+  Bin?` becomes a styled modal with the items listed (capped at 5
+  + "and N more"), a Recycle Bin icon, and a destructive accent
+  on the OK button. Same shape for Permanently delete (Shift+Del).
+- **Rename inline already exists** (Phase 6a's F2 inline editor)
+  -- this phase doesn't change row-level rename. The command-bar
+  Rename button still walks through the modal because the user
+  may have multi-select; for single selection it could fall
+  through to the inline editor (decide during implementation).
+- **Style:** matches `.popover` / `.search-banner` -- 1 px
+  border, 6 px radius, soft drop shadow, body in `var(--surface)`.
+  Header has the title; body has the prompt + input; footer has
+  Cancel + primary button right-aligned. Min width 360 px.
+- **Visual button polish (drive-by).** While we're touching the
+  cmd-bar buttons, the `.cmdbtn` style is currently flat-text;
+  give it the same hover treatment as `.iconbtn`, swap the
+  emoji-ish glyphs in `Copy` / `Rename` for properly-aligned
+  iconHTML calls (most already use icons but `Compare` and
+  `Delete` slightly drift). Same height (28 px), same accent on
+  hover.
+- Out of scope: a full settings / preferences pane (parked for a
+  later polish pass); toast notifications for action results
+  (success / failure feedback) -- just keep the existing console
+  warns for v1.
+
+### Phase 9 — Crew (Copilot CLI) integration
+
+Wire the `crew` CLI from
+[Eurus7895/CopilotCrew](https://github.com/Eurus7895/CopilotCrew/tree/dev)
+into SimpleExplorer so a user can ask natural-language questions
+about the file(s) they're looking at without leaving the explorer.
+Crew is the terminal-native Copilot SDK assistant — `crew "what
+does this file do"` runs a routed LLM call; agents, pipelines, and
+skills are reachable via `--agent`, `--pipeline`, `/<skill>`. We
+shell out to the binary; we do **not** import its Python or vendor
+its SDK.
+
+Three sub-phases, total ~4 days. 9a is the spine; 9b makes it
+useful for the explorer-specific case; 9c is the polish that
+turns the surface into something users will reach for.
+
+| Sub-phase | Theme | Size | Helper? | Risk |
+| --- | --- | --- | --- | --- |
+| 9a | Spawn `crew` and stream output | 1.5d | no | low |
+| 9b | File-context injection + right-click action | 1.5d | no | low |
+| 9c | Skill / agent quick-pick + output drawer | 1d | no | med |
+
+**Out of scope across the whole phase:**
+- Bundling Crew or its Python runtime. We assume `crew` is on
+  the user's `PATH`; if not, the integration shows a one-shot
+  "Crew not found — install via `pipx install copilotcrew`"
+  notice and stays out of the way. No silent install attempts.
+- Crew's `gui` mode (it has its own desktop interface). We don't
+  embed or compete with that; we just expose the CLI.
+- Auth flow inside SimpleExplorer. Crew handles its own GitHub
+  Copilot login on first run — we surface stderr so the user
+  sees the device-code prompt and resolves it externally.
+- Pipeline editing / agent authoring. We *invoke* what's in
+  `~/.crew/`; we don't manage it.
+
+#### 9a — Spawn `crew` and stream output (~1.5 days)
+
+The minimum viable path: a "Crew" panel that can run `crew
+"<prompt>"` and show streaming stdout. Reuses Phase 7g's terminal
+infrastructure rather than rolling a new IPC layer.
+
+- **`src/crew.js` (new)** — wraps `Neutralino.os.spawnProcess`
+  around the `crew` binary. Exports `runCrew({ args, onChunk,
+  signal })` returning a Promise; chunks come from
+  `events.on('spawnedProcess', …)` in 16 ms-coalesced batches.
+  AbortSignal cancellation maps to `os.updateSpawnedProcess(…,
+  'exit')`.
+- **Detect availability.** On boot, `where crew` (or `which crew`
+  fallback). Cache the result; the rail icon shows disabled with
+  a tooltip "Install crew via pipx install copilotcrew" when
+  missing.
+- **Reuse the terminal panel chrome.** Crew runs as a special
+  tab type alongside the existing shell tabs — `tab.kind:
+  'crew' | 'shell'`. Crew tabs render with a different prompt
+  (`crew >`) and the input maps Enter to `runCrew(['"' + line +
+  '"'])` instead of stdin. The `<pre>` history shows the streamed
+  output verbatim.
+- **First-class shortcut.** `Ctrl+Shift+\`` opens or focuses a
+  Crew tab (mirrors Ctrl+\` for shell).
+- **Cancellation.** Esc inside a running Crew tab signals abort;
+  the helper-side process is killed, the partial output is kept
+  in scrollback with a `[cancelled]` marker.
+
+#### 9b — File-context injection + right-click action (~1.5 days)
+
+Make Crew aware of *what file the user is looking at*. The whole
+point of integrating with an explorer is the explorer-specific
+context.
+
+- **Right-click → "Ask Crew about this"** on selected files /
+  folders. Single file: prepends `--direct "Reading file: <path>.
+  "` to the user's prompt. Multi-select: lists the paths.
+  Folder: passes the directory and a tree summary (capped at 200
+  entries).
+- **`@` mention syntax inside the Crew tab input** — typing `@`
+  opens an inline picker (reuses Phase 4's palette positioning)
+  with files from the active pane's current directory. Picking
+  one inserts its absolute path. Saves the user from typing long
+  paths in prompts.
+- **`Ctrl+Shift+A` from anywhere** = "Ask Crew about active
+  pane's selection." If selection is empty, falls back to the
+  current pane path.
+- **Folder-as-context limits.** Folder mentions don't read every
+  file's content (would blow the LLM context window) — they pass
+  the path string. Crew's own MCP tools fetch content if its
+  router decides it needs to.
+
+#### 9c — Skill / agent quick-pick + output drawer (~1 day)
+
+Surface what Crew already exposes so users don't have to memorize
+flags.
+
+- **Slash-command palette inside the Crew tab.** Typing `/` at
+  the start of an input opens a picker listing skills found in
+  `~/.crew/.github/skills/` and agents in `~/.crew/.github/
+  agents/`. Selection inserts the canonical
+  `--agent <name>` / `/<skill>` flag; user adds the prompt and
+  hits Enter.
+- **Output drawer.** Crew writes to `~/.crew/outputs/` for any
+  pipeline that produces files. Add a small footer button in
+  the Crew tab: "Open last output" (navigates the active pane to
+  the most-recent file in `~/.crew/outputs/`). Saves a manual
+  `cd`.
+- **Recent prompts.** Up/Down arrow already navigates terminal
+  history (Phase 7g); Crew tabs share the same per-tab history,
+  so `↑` recalls the last prompt.
+- **Status line.** Bottom-right of the panel shows "crew vX.Y |
+  agent: <last> | turn N/cap" parsed from Crew's stderr signals
+  if available, otherwise empty.
+
+#### Risks / gotchas
+- **PATH discovery.** `crew` is installed via `pipx`, which
+  drops it in `%USERPROFILE%\.local\bin` or `%LOCALAPPDATA%\
+  pipx\venvs\…`. `where crew` finds it only if pipx ran
+  `ensurepath`. Need to fall back to a couple of well-known
+  locations before declaring it missing.
+- **Streaming format.** Crew's stdout might be plain text or it
+  might emit ANSI / token-chunked output. We treat it as plain
+  text for v1; if we see escape sequences we cope with them in
+  9c by piping through a tiny ANSI stripper (or accept the noise
+  until Phase 8b's xterm.js lands).
+- **Auth on first run.** Crew shows a device-code URL in stderr.
+  We display stderr inline so the user can copy the URL — no
+  in-app browser flow.
+- **Long answers vs the panel.** Crew responses can be paragraphs.
+  The panel's `<pre>` already wraps with `white-space: pre-wrap`
+  (Phase 7g), so this works; just verify the 4 MB ring buffer
+  doesn't truncate mid-answer.
 
 ## Open questions / debt
 

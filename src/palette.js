@@ -188,6 +188,17 @@ function commandResults(query) {
 function searchResults(query, pane) {
   const q = query.toLowerCase();
   const out = [];
+  // Escalation entry: when there's a query AND a pane to search inside,
+  // the first row offers a recursive walk. Picking it (Enter / click)
+  // dispatches via ctx.onRecursiveSearch and replaces the pane's rows.
+  if (q && pane?.path) {
+    out.push({
+      kind: 'recursive',
+      label: `Search "${query}" inside this folder`,
+      hint: pane.path,
+      query,
+    });
+  }
   if (q && pane?.entries) {
     for (const e of pane.entries) {
       if (e.name.toLowerCase().includes(q)) {
@@ -286,6 +297,10 @@ function runItem(item, ctx, pane) {
   }
   if (item.kind === 'entry') {
     ctx.onActivateEntry(ctx.activePane, item.entry);
+    return;
+  }
+  if (item.kind === 'recursive') {
+    ctx.onRecursiveSearch?.(ctx.activePane, item.query);
   }
 }
 
@@ -294,6 +309,7 @@ function iconForItem(it) {
   if (it.kind === 'recent') return iconHTML('clock', 13);
   if (it.kind === 'path') return iconHTML('folder', 13);
   if (it.kind === 'entry') return iconHTML(kindFor(it.entry), 13);
+  if (it.kind === 'recursive') return iconHTML('search', 13);
   return iconHTML('file', 13);
 }
 

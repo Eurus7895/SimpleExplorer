@@ -24,6 +24,8 @@ const SVG = {
   drive:       `<g ${STROKE}><rect x="2.5" y="5" width="11" height="6" rx="1"/><circle cx="11.5" cy="8" r=".7" fill="currentColor" stroke="none"/></g>`,
   pin:         `<path ${STROKE} d="M9.5 2.5 13.5 6.5l-3 1-3.5 3.5-1.5-1.5L9 6 9.5 2.5ZM6 10l-3 3"/>`,
   search:      `<g ${STROKE}><circle cx="7" cy="7" r="4"/><path d="m10 10 3.5 3.5"/></g>`,
+  eye:         `<g ${STROKE}><path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8Z"/><circle cx="8" cy="8" r="2"/></g>`,
+  terminal:    `<g ${STROKE}><rect x="2" y="3" width="12" height="10" rx="1"/><path d="m5 7 2 1.5-2 1.5M8 11h3"/></g>`,
   back:        `<path ${STROKE} d="M10 3 5 8l5 5"/>`,
   fwd:         `<path ${STROKE} d="m6 3 5 5-5 5"/>`,
   up:          `<path ${STROKE} d="M8 12V4M4 8l4-4 4 4"/>`,

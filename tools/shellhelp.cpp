@@ -8,7 +8,8 @@
 // …) via IContextMenu so it matches stock Explorer 1:1.
 //
 // Build (one-time, MSVC):
-//   cl /nologo /EHsc /O2 /utf-8 shellhelp.cpp /link shell32.lib ole32.lib user32.lib
+//   cl /nologo /EHsc /O2 /utf-8 shellhelp.cpp ^
+//     /link shell32.lib ole32.lib user32.lib gdi32.lib windowscodecs.lib
 //
 // Verbs:
 //   shellhelp properties <path>             — show real Windows Properties
@@ -16,14 +17,19 @@
 //   shellhelp drives                        — emit drive-list JSON to stdout
 //   shellhelp menu <path> [<path> ...]      — emit context-menu JSON tree
 //   shellhelp invoke <id> <path> [<path>...] — invoke menu command id
+//   shellhelp thumb <size> <path>           — write PNG thumb to %TEMP%; print path
+//   shellhelp dragout <path> [<path> ...]   — start CF_HDROP DoDragDrop; print effect
 
 #include <windows.h>
 #include <shlobj.h>
 #include <shobjidl.h>
 #include <objbase.h>
+#include <wincodec.h>
+#include <oleidl.h>
 #include <stdio.h>
 #include <wchar.h>
 #include <string.h>
+#include <stdlib.h>
 
 // ID range for QueryContextMenu. 1-based — id 0 means "no command".
 #define CTX_ID_MIN  1
@@ -347,9 +353,139 @@ static int verb_invoke(int argc, wchar_t** argv) {
     return SUCCEEDED(hr) ? 0 : 1;
 }
 
+// Save HBITMAP to a PNG file via WIC. Caller owns the bitmap. Returns
+// HRESULT; on success, the file at `outPath` contains the encoded PNG.
+static HRESULT save_hbitmap_png(HBITMAP hbm, const wchar_t* outPath) {
+    IWICImagingFactory* factory = NULL;
+    HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER,
+                                  IID_PPV_ARGS(&factory));
+    if (FAILED(hr)) return hr;
+
+    IWICBitmap* bitmap = NULL;
+    hr = factory->CreateBitmapFromHBITMAP(hbm, NULL, WICBitmapUseAlpha, &bitmap);
+    if (SUCCEEDED(hr)) {
+        IWICStream* stream = NULL;
+        hr = factory->CreateStream(&stream);
+        if (SUCCEEDED(hr)) {
+            hr = stream->InitializeFromFilename(outPath, GENERIC_WRITE);
+            if (SUCCEEDED(hr)) {
+                IWICBitmapEncoder* enc = NULL;
+                hr = factory->CreateEncoder(GUID_ContainerFormatPng, NULL, &enc);
+                if (SUCCEEDED(hr)) {
+                    hr = enc->Initialize(stream, WICBitmapEncoderNoCache);
+                    if (SUCCEEDED(hr)) {
+                        IWICBitmapFrameEncode* frame = NULL;
+                        IPropertyBag2* props = NULL;
+                        hr = enc->CreateNewFrame(&frame, &props);
+                        if (SUCCEEDED(hr)) {
+                            frame->Initialize(props);
+                            UINT w = 0, h = 0;
+                            bitmap->GetSize(&w, &h);
+                            frame->SetSize(w, h);
+                            WICPixelFormatGUID fmt = GUID_WICPixelFormat32bppBGRA;
+                            frame->SetPixelFormat(&fmt);
+                            frame->WriteSource(bitmap, NULL);
+                            frame->Commit();
+                            enc->Commit();
+                            frame->Release();
+                            if (props) props->Release();
+                        }
+                    }
+                    enc->Release();
+                }
+            }
+            stream->Release();
+        }
+        bitmap->Release();
+    }
+    factory->Release();
+    return hr;
+}
+
+static int verb_thumb(int argc, wchar_t** argv) {
+    if (argc < 4) {
+        fwprintf(stderr, L"shellhelp: thumb needs <size> <path>\n");
+        return 2;
+    }
+    int size = _wtoi(argv[2]);
+    if (size <= 0 || size > 1024) size = 96;
+    const wchar_t* path = argv[3];
+
+    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    if (FAILED(hr)) return (int)hr;
+
+    IShellItemImageFactory* factory = NULL;
+    hr = SHCreateItemFromParsingName(path, NULL, IID_PPV_ARGS(&factory));
+    if (FAILED(hr)) { CoUninitialize(); return (int)hr; }
+
+    SIZE sz = { size, size };
+    HBITMAP hbm = NULL;
+    // SIIGBF_THUMBNAILONLY would refuse to fall back to an icon. We
+    // accept fallback so the cache still has *something* for icons.
+    hr = factory->GetImage(sz, SIIGBF_RESIZETOFIT | SIIGBF_BIGGERSIZEOK, &hbm);
+    factory->Release();
+    if (FAILED(hr) || !hbm) { CoUninitialize(); return (int)hr; }
+
+    // Write to %TEMP%\sephthumb_<tick>.png; tick keeps the name unique
+    // across rapid calls without bloating the cache helper-side.
+    wchar_t tempDir[MAX_PATH];
+    GetTempPathW(_countof(tempDir), tempDir);
+    wchar_t outPath[MAX_PATH];
+    swprintf_s(outPath, _countof(outPath), L"%ssephthumb_%llu.png",
+               tempDir, (unsigned long long)GetTickCount64());
+
+    hr = save_hbitmap_png(hbm, outPath);
+    DeleteObject(hbm);
+    CoUninitialize();
+    if (FAILED(hr)) return (int)hr;
+
+    // Print the path — JS reads it via filesystem.readBinaryFile.
+    wprintf(L"%ls\n", outPath);
+    return 0;
+}
+
+static int verb_dragout(int argc, wchar_t** argv) {
+    if (argc < 3) {
+        fwprintf(stderr, L"shellhelp: dragout needs <path> [<path> ...]\n");
+        return 2;
+    }
+    HRESULT hr = OleInitialize(NULL);
+    if (FAILED(hr)) return (int)hr;
+
+    IShellItemArray* arr = NULL;
+    PIDLIST_ABSOLUTE* pidls = (PIDLIST_ABSOLUTE*)CoTaskMemAlloc(sizeof(PIDLIST_ABSOLUTE) * (argc - 2));
+    int count = 0;
+    for (int i = 2; i < argc; ++i) {
+        PIDLIST_ABSOLUTE pidl = NULL;
+        if (SUCCEEDED(SHParseDisplayName(argv[i], NULL, &pidl, 0, NULL))) {
+            pidls[count++] = pidl;
+        }
+    }
+    if (!count) { CoTaskMemFree(pidls); OleUninitialize(); return 1; }
+
+    hr = SHCreateShellItemArrayFromIDLists(count, (PCIDLIST_ABSOLUTE_ARRAY)pidls, &arr);
+    for (int i = 0; i < count; ++i) ILFree(pidls[i]);
+    CoTaskMemFree(pidls);
+    if (FAILED(hr) || !arr) { OleUninitialize(); return (int)hr; }
+
+    IDataObject* data = NULL;
+    hr = arr->BindToHandler(NULL, BHID_DataObject, IID_PPV_ARGS(&data));
+    arr->Release();
+    if (FAILED(hr) || !data) { OleUninitialize(); return (int)hr; }
+
+    DWORD effect = 0;
+    hr = DoDragDrop(data, NULL, DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK, &effect);
+    data->Release();
+    OleUninitialize();
+    // Print effect so JS can decide whether to refresh the source pane:
+    //   1 = copy, 2 = move, 4 = link, 0 = none/cancelled.
+    wprintf(L"%lu\n", effect);
+    return SUCCEEDED(hr) ? 0 : 1;
+}
+
 int wmain(int argc, wchar_t** argv) {
     if (argc < 2) {
-        fwprintf(stderr, L"shellhelp: needs verb (properties|trash|drives|menu|invoke)\n");
+        fwprintf(stderr, L"shellhelp: needs verb (properties|trash|drives|menu|invoke|thumb|dragout)\n");
         return 2;
     }
     if (wcscmp(argv[1], L"properties") == 0) return verb_properties(argc, argv);
@@ -357,6 +493,8 @@ int wmain(int argc, wchar_t** argv) {
     if (wcscmp(argv[1], L"drives") == 0)     return verb_drives();
     if (wcscmp(argv[1], L"menu") == 0)       return verb_menu(argc, argv);
     if (wcscmp(argv[1], L"invoke") == 0)     return verb_invoke(argc, argv);
+    if (wcscmp(argv[1], L"thumb") == 0)      return verb_thumb(argc, argv);
+    if (wcscmp(argv[1], L"dragout") == 0)    return verb_dragout(argc, argv);
     fwprintf(stderr, L"shellhelp: unknown verb %ls\n", argv[1]);
     return 2;
 }

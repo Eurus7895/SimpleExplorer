@@ -97,6 +97,36 @@ export function basename(path) {
   return idx === -1 ? norm : norm.slice(idx + 1);
 }
 
+// Parse a `text/uri-list` payload (RFC 2483: line-delimited URIs, lines
+// starting with `#` are comments) into local FS paths. Anything that
+// isn't `file://...` is dropped because OS drag sources from outside
+// the filesystem are not actionable for our copy/move flow.
+export function parseUriList(text) {
+  if (!text) return [];
+  return text.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .map(uriToLocalPath)
+    .filter(Boolean);
+}
+
+function uriToLocalPath(uri) {
+  if (!uri.startsWith('file:')) return null;
+  // Standard URL-decode and strip the `file://` scheme. UNC paths come
+  // through as `file://server/share/...`; we leave the leading `\\` in
+  // place. Drive paths come through as `file:///C:/...` -- drop the
+  // single leading slash before the drive letter.
+  let p;
+  try { p = decodeURIComponent(uri.replace(/^file:\/\//, '')); }
+  catch { return null; }
+  if (/^\/[A-Za-z]:/.test(p)) p = p.slice(1);
+  // Normalize to backslashes when the path is a Windows drive form
+  // (Neutralino's filesystem APIs accept either, but our other helpers
+  // expect backslash on Windows).
+  if (/^[A-Za-z]:/.test(p)) return p.replace(/\//g, '\\');
+  return p;
+}
+
 export function pathSegments(path) {
   const norm = normalizePath(path);
   if (/^[A-Za-z]:/.test(norm)) {
@@ -179,6 +209,40 @@ export async function helperInvoke(id, paths) {
   return true;
 }
 
+// Generate a thumbnail via IShellItemImageFactory and return a blob URL
+// that the caller can stick in an <img src=...>. The helper writes a
+// short-lived PNG to %TEMP% and prints its path; we read the bytes back
+// and wrap them in a Blob. Returns null when the helper isn't built or
+// the thumbnail can't be produced (e.g. disk error). Caller is responsible
+// for revoking the URL when done — thumbnails.js's LRU does that.
+export async function thumbnail(path, size = 96) {
+  if (!N || !(await helperAvailable())) return null;
+  let r;
+  try { r = await runHelper('thumb', String(size), path); }
+  catch { return null; }
+  if (r.exitCode !== 0) return null;
+  const tempPath = (r.stdOut || '').trim();
+  if (!tempPath) return null;
+  let buf;
+  try { buf = await N.filesystem.readBinaryFile(tempPath); }
+  catch { return null; }
+  // Cleanup the temp PNG; the Blob keeps an in-memory copy.
+  N.filesystem.remove(tempPath).catch(() => {});
+  return URL.createObjectURL(new Blob([buf], { type: 'image/png' }));
+}
+
+// Drag selected paths out to the OS via the helper's DoDragDrop wrapper.
+// Blocks while the user holds the drag; resolves with the chosen
+// DROPEFFECT (1=copy, 2=move, 4=link, 0=cancelled). Returns 0 when the
+// helper is missing.
+export async function dragOut(paths) {
+  if (!N || !(await helperAvailable()) || !paths?.length) return 0;
+  let r;
+  try { r = await runHelper('dragout', ...paths); }
+  catch { return 0; }
+  return parseInt((r.stdOut || '').trim(), 10) || 0;
+}
+
 async function exec(cmd) {
   if (!N) { console.warn('[mock] exec', cmd); return { stdOut: '', stdErr: '', exitCode: 0 }; }
   try {
@@ -245,6 +309,26 @@ export async function listDir(path) {
     return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
   });
   return out;
+}
+
+// Read text from a file, capped at maxBytes characters (rough — string
+// length, not bytes after UTF-8 decode). Used by the preview pane to
+// avoid blowing up the WebView with multi-megabyte logs / data files.
+// Returns null when the read fails (file gone, permission denied, etc.)
+// so callers can render a graceful fallback.
+export async function readTextFile(path, maxBytes = 1024 * 1024) {
+  if (!N) return '[mock preview]\n' + path;
+  try {
+    const text = await N.filesystem.readFile(path);
+    if (typeof text !== 'string') return String(text || '');
+    if (text.length > maxBytes) {
+      return text.slice(0, maxBytes) + `\n\n… (truncated to ${maxBytes} chars)`;
+    }
+    return text;
+  } catch (e) {
+    console.warn('readTextFile failed:', path, e);
+    return null;
+  }
 }
 
 export async function makeDir(path) {
@@ -341,17 +425,24 @@ export async function revealInOS(path) {
 // ── Curated context-menu actions (new vs Tauri version) ─────────────────────
 
 // Show the real Windows Properties dialog. Prefers the native helper
-// (~50 ms via ShellExecuteEx + "properties" verb); falls back to a
-// PowerShell + Shell.Application COM call when the helper hasn't been
-// built yet (~250-400 ms).
+// (~50 ms via ShellExecuteEx + "properties" verb); falls back to
+// `Start-Process -Verb Properties` when the helper hasn't been built
+// yet (~250-400 ms). The earlier `Shell.Application.InvokeVerb`
+// fallback was modeless and got torn down when PowerShell exited a
+// beat later -- the dialog flickered and disappeared. Start-Process
+// hands the verb to ShellExecuteEx, which gives the dialog the OS
+// shell as parent, so it persists after PowerShell returns.
 export async function showProperties(path) {
   if (!N) { console.warn('[mock] properties', path); return; }
   if (await helperAvailable()) {
     await N.os.execCommand(`"${HELPER_PATH}" properties "${path}"`, { background: true });
     return;
   }
-  const ps = `$s = New-Object -ComObject Shell.Application; $i = $s.NameSpace((Split-Path ${psQuote(path)} -Parent)).ParseName((Split-Path ${psQuote(path)} -Leaf)); $i.InvokeVerb('Properties')`;
-  await execBg(`powershell -NoProfile -Command "${ps.replace(/"/g, '\\"')}"`);
+  // Single-quoted PS string preserves backslashes; escape any embedded
+  // single quotes by doubling them per PS lexical rules.
+  const psPath = path.replace(/'/g, "''");
+  const ps = `Start-Process -FilePath '${psPath}' -Verb Properties`;
+  await execBg(`powershell -NoProfile -WindowStyle Hidden -Command "${ps.replace(/"/g, '\\"')}"`);
 }
 
 export async function openInVSCode(path) {

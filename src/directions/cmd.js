@@ -3,10 +3,12 @@
 // header. Visuals trace explorer-cmd.jsx in the design bundle.
 
 import { iconHTML } from '../icons.js';
-import { renderRows, buildSegPath, selectionSizeLabel, getRecent } from '../pane.js';
+import { renderRows, buildSegPath, selectionSizeLabel, getRecent, renderSearchBanner } from '../pane.js';
 import { RAIL_ITEMS } from '../sidebar-data.js';
 import { applyLayout } from '../layout.js';
 import { openPalette, closePalette, isPaletteOpen } from '../palette.js';
+import { ensurePreviewPanel, bindPreviewClose, showPreviewFor } from '../preview.js';
+import { renderTerminal, isTerminalOpen, toggleTerminal } from '../terminal.js';
 import * as fs from '../fs.js';
 
 const LAYOUT_OPTS = [
@@ -33,12 +35,34 @@ export function renderCmd(root, ctx) {
   applyLayout(grid, ctx.layout, ctx.splits, cards, ctx.onSplitChange);
 
   body.appendChild(grid);
+  if (ctx.previewOpen) {
+    const previewWrap = el('div', 'b-preview-wrap');
+    ensurePreviewPanel(previewWrap);
+    bindPreviewClose(() => ctx.onPreviewToggle());
+    body.appendChild(previewWrap);
+    queueMicrotask(() => ctx.pushPreview?.(ctx.activePane));
+  }
   app.appendChild(body);
+
+  // Integrated terminal (Phase 7g) — bottom panel, Cmd direction only.
+  if (isTerminalOpen()) {
+    const termWrap = el('div', 'b-term-wrap');
+    const activePane = ctx.panes[ctx.activePane];
+    renderTerminal(termWrap, {
+      onClose: () => { toggleTerminal(); ctx.rerender?.(); },
+      panePath: activePane?.path,
+    });
+    app.appendChild(termWrap);
+  }
+
   root.appendChild(app);
 }
 
 function topBar(ctx) {
   const bar = el('div', 'b-topbar');
+  bar.dataset.dragRegion = '';
+  const maxIcon = ctx.maximized ? '❐' : '☐';
+  const maxTitle = ctx.maximized ? 'Restore' : 'Maximize';
   bar.innerHTML = `
     <div class="b-brand">
       <div class="b-brand__logo"></div>
@@ -53,16 +77,27 @@ function topBar(ctx) {
       <kbd>Ctrl K</kbd>
     </div>
     <div class="spacer"></div>
+    <button class="iconbtn ${ctx.previewOpen ? 'on' : ''}" data-act="previewToggle" title="Toggle preview pane (Ctrl+P)">${iconHTML('eye', 14)}</button>
     ${directionSwitcher(ctx)}
     ${layoutPicker(ctx)}
     ${viewPicker(ctx)}
     <button class="iconbtn" data-act="theme" title="Toggle theme">${iconHTML(ctx.theme === 'dark' ? 'sun' : 'moon')}</button>
+    <div class="b-wincontrols">
+      <span class="b-winctl" data-winctl="min" title="Minimize">─</span>
+      <span class="b-winctl" data-winctl="max" title="${maxTitle}">${maxIcon}</span>
+      <span class="b-winctl b-winctl--close" data-winctl="close" title="Close">✕</span>
+    </div>
   `;
   bindClicks(bar, ctx);
   bindNav(bar, ctx);
   bindLayout(bar, ctx);
   bindView(bar, ctx);
   bindPalette(bar, ctx);
+  bindWinCtl(bar, ctx);
+  bar.addEventListener('dblclick', (e) => {
+    if (e.target.closest('button, input, .b-winctl, .dir-switch, .b-cmdpalette, .b-rail, [data-layout], [data-view]')) return;
+    ctx.onWinCtl('max');
+  });
   return bar;
 }
 
@@ -89,6 +124,15 @@ function rail(ctx) {
   });
   const spacer = el('div', 'spacer');
   r.appendChild(spacer);
+  const term = el('button', 'b-rail__btn' + (isTerminalOpen() ? ' b-rail__btn--active' : ''));
+  term.title = 'Toggle terminal (Ctrl+`)';
+  term.innerHTML = `${iconHTML('terminal', 14)}<span class="b-rail__label">Terminal</span>`;
+  term.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleTerminal();
+    ctx.rerender?.();
+  });
+  r.appendChild(term);
   const more = el('button', 'b-rail__btn');
   more.innerHTML = `${iconHTML('more', 14)}<span class="b-rail__label">More</span>`;
   r.appendChild(more);
@@ -182,6 +226,13 @@ function escapeHtml(s) {
 function paneCard(ctx, pane, i) {
   const card = el('div', 'b-pane' + (i === ctx.activePane ? ' b-pane--active' : ''));
   card.dataset.paneIdx = i;
+  // Programmatic focus target so explorer keystrokes go here instead
+  // of staying in the terminal input. See fluent.js paneCard for the
+  // full rationale.
+  card.tabIndex = -1;
+  card.addEventListener('mousedown', () => {
+    card.focus({ preventScroll: true });
+  });
   card.addEventListener('click', () => ctx.setActivePane(i));
 
   const head = el('div', 'b-pane__head');
@@ -212,6 +263,12 @@ function paneCard(ctx, pane, i) {
   head.appendChild(more);
   card.appendChild(head);
 
+  const banner = renderSearchBanner(pane, {
+    onCancel: () => ctx.onCancelSearch(i),
+    onClear: () => ctx.onClearSearch(i),
+  });
+  if (banner) card.appendChild(banner);
+
   const rows = renderRows(pane, {
     paneIdx: i,
     density: 'cmd',
@@ -219,6 +276,7 @@ function paneCard(ctx, pane, i) {
     onPaneActivate: () => ctx.setActivePane(i),
     onRename: (oldName, newName) => ctx.onRename(i, oldName, newName),
     onDrop: (srcIdx, names, op) => ctx.onDrop(srcIdx, i, names, op),
+    onForeignDrop: (paths, op) => ctx.onForeignDrop(i, paths, op),
   });
   card.appendChild(rows);
 
@@ -317,6 +375,11 @@ function bindNav(scope, ctx) {
     else if (el.dataset.nav === 'fwd') ctx.onPaneForward(ctx.activePane);
     else if (el.dataset.nav === 'up') ctx.onPaneUp(ctx.activePane);
   }));
+}
+
+function bindWinCtl(scope, ctx) {
+  scope.querySelectorAll('[data-winctl]').forEach((el) =>
+    el.addEventListener('click', (e) => { e.stopPropagation(); ctx.onWinCtl(el.dataset.winctl); }));
 }
 
 function bindLayout(scope, ctx) {

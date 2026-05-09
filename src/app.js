@@ -3,11 +3,14 @@
 // that paints the chrome around the panes.
 
 import * as fs from './fs.js';
-import { createPaneState, navigate, goBack, goForward, goUp, loadPath, tabNew, tabClose, tabSwitch, tabSnapshot } from './pane.js';
+import { createPaneState, navigate, goBack, goForward, goUp, loadPath, tabNew, tabClose, tabSwitch, tabSnapshot, sortedEntries } from './pane.js';
 import { renderFluent, statusBar as fluentStatusBar } from './directions/fluent.js';
 import { renderCmd } from './directions/cmd.js';
 import { LAYOUT_DEFS, DEFAULT_SPLITS } from './layout.js';
 import { openPalette, isPaletteOpen } from './palette.js';
+import { recursiveSearch } from './search.js';
+import { ensurePreviewPanel, bindPreviewClose, showPreviewFor } from './preview.js';
+import { toggleTerminal } from './terminal.js';
 
 // Boot the Neutralino client. Safe to call before DOM ready; APIs queue until
 // the runtime handshake completes. No-op when running directly in a browser
@@ -21,6 +24,34 @@ if (window.Neutralino) {
   }
 }
 
+// Mica needs Win11 22H2+ (build 22621). On older builds we fall back to a
+// flat acrylic backdrop. The detection result toggles a [data-mica] on the
+// root element which CSS reads.
+async function readInitialMaximizedState() {
+  const N = window.Neutralino;
+  if (!N || !N.window || !N.window.isMaximized) return;
+  try { windowMaximized = await N.window.isMaximized(); }
+  catch { /* leave default */ }
+}
+
+async function detectBackdropCapability() {
+  const N = window.Neutralino;
+  if (!N || !N.computer || !N.computer.getOSInfo) {
+    document.documentElement.dataset.mica = 'fallback';
+    return;
+  }
+  try {
+    const info = await N.computer.getOSInfo();
+    // Neutralino exposes `name`, `description`, `version` (e.g. "10.0.22621").
+    const m = (info.version || '').match(/(\d+)\.(\d+)\.(\d+)/);
+    const build = m ? parseInt(m[3], 10) : 0;
+    const isMicaCapable = /windows/i.test(info.name || '') && build >= 22621;
+    document.documentElement.dataset.mica = isMicaCapable ? 'on' : 'fallback';
+  } catch {
+    document.documentElement.dataset.mica = 'fallback';
+  }
+}
+
 const STATE_KEY = 'simple-explorer.state';
 const TABS_KEY = 'simple-explorer.tabs';
 const DEFAULT = {
@@ -29,6 +60,8 @@ const DEFAULT = {
   themeB: 'light', layoutB: '2v',
   splits: { ...DEFAULT_SPLITS },
   cmdRailOpen: 'recent',
+  previewOpen: false,
+  sidebarMode: 'quick',
 };
 
 const RENDERERS = {
@@ -41,6 +74,7 @@ let panes = [];
 let activePane = 0;
 let homePath = '~';
 let drives = [];
+let windowMaximized = false;
 
 // Stable adapter for the palette so the global Ctrl+K handler doesn't
 // have to chase the per-render ctx. Getters resolve at call time so
@@ -48,11 +82,14 @@ let drives = [];
 const paletteCtx = {
   get activePane() { return activePane; },
   get panes() { return panes; },
-  onPaneNav: async (i, path) => { await navigate(panes[i], path); saveTabs(); render(); },
+  onPaneNav: async (i, path) => { clearSearch(panes[i]); await navigate(panes[i], path); saveTabs(); render(); },
   onActivateEntry: (i, entry) => handleActivate(i, entry),
+  onRecursiveSearch: (i, query) => runRecursiveSearch(i, query),
 };
 
 async function init() {
+  await detectBackdropCapability();
+  await readInitialMaximizedState();
   homePath = (await fs.homeDir()) || '~';
   const seedPaths = [
     homePath,
@@ -107,11 +144,21 @@ async function safeLoad(state) {
 function applyActivePane(i) {
   if (i < 0 || i >= panes.length) return;
   activePane = i;
+  let activeCard = null;
   document.querySelectorAll('[data-pane-idx]').forEach((card) => {
     const isActive = Number(card.dataset.paneIdx) === i;
     if (card.classList.contains('a-pane')) card.classList.toggle('a-pane--active', isActive);
     if (card.classList.contains('b-pane')) card.classList.toggle('b-pane--active', isActive);
+    if (isActive) activeCard = card;
   });
+  // If the terminal currently owns focus, hand it to the active pane
+  // card so explorer keys (F2 / Del / type-to-jump) start working.
+  // Skip when a rename input is mid-edit -- we don't want to abort it.
+  const ae = document.activeElement;
+  const isRename = ae && ae.classList && ae.classList.contains('row__rename');
+  if (activeCard && !isRename && (isTerminalFocused() || ae === document.body || ae === null)) {
+    activeCard.focus?.({ preventScroll: true });
+  }
   const oldBar = document.querySelector('.a-statusbar');
   if (oldBar) oldBar.replaceWith(fluentStatusBar({ panes, activePane }));
 }
@@ -138,24 +185,23 @@ function render() {
       saveSettings();
       render();
     },
+    maximized: windowMaximized,
     async onWinCtl(kind) {
       const N = window.Neutralino; if (!N) return;
-      // Each call wrapped individually — Neutralino 5.6.0 with the default
-      // (non-frameless) window mode can race with the OS title bar and
-      // leave the window in a degenerate state if these throw mid-toggle.
-      // The OS title bar still has its own ☐ / ─ / ✕, so on failure the
-      // user can recover from there.
       if (kind === 'min') {
         try { await N.window.minimize(); }
         catch (e) { console.warn('window.minimize failed:', e); }
       } else if (kind === 'max') {
-        // Always maximize — let the OS title bar handle un-maximize.
-        // The previous isMaximized() / unmaximize() toggle could send the
-        // window off-screen on multi-monitor / HiDPI setups.
+        // Frameless mode owns the title bar — toggle is mandatory because
+        // there is no OS chrome to fall back on. Wrap each call so a failed
+        // isMaximized() check doesn't strand the window in a half state.
         try {
-          await N.window.maximize();
-          await N.window.show(); // safety net in case maximize hid us
-        } catch (e) { console.warn('window.maximize failed:', e); }
+          const isMax = await N.window.isMaximized();
+          if (isMax) await N.window.unmaximize();
+          else await N.window.maximize();
+          windowMaximized = !isMax;
+          render();
+        } catch (e) { console.warn('window.max toggle failed:', e); }
       } else if (kind === 'close') {
         try { await N.app.exit(); }
         catch (e) { console.warn('app.exit failed:', e); }
@@ -166,10 +212,13 @@ function render() {
     setTheme(t) { settings[dir.themeKey] = t; saveSettings(); render(); },
     setLayout(l) { settings[dir.layoutKey] = l; saveSettings(); render(); },
     onActivateEntry: handleActivate,
-    onPaneNav: async (i, path) => { await navigate(panes[i], path); saveTabs(); render(); },
-    onPaneBack: async (i) => { await goBack(panes[i]); saveTabs(); render(); },
-    onPaneForward: async (i) => { await goForward(panes[i]); saveTabs(); render(); },
-    onPaneUp: async (i) => { await goUp(panes[i]); saveTabs(); render(); },
+    onPaneNav: async (i, path) => { clearSearch(panes[i]); await navigate(panes[i], path); saveTabs(); render(); },
+    onPaneBack: async (i) => { clearSearch(panes[i]); await goBack(panes[i]); saveTabs(); render(); },
+    onPaneForward: async (i) => { clearSearch(panes[i]); await goForward(panes[i]); saveTabs(); render(); },
+    onPaneUp: async (i) => { clearSearch(panes[i]); await goUp(panes[i]); saveTabs(); render(); },
+    onRecursiveSearch: (i, query) => runRecursiveSearch(i, query),
+    onCancelSearch: (i) => cancelSearch(panes[i]),
+    onClearSearch: (i) => { clearSearch(panes[i]); render(); },
     onFilter: (i, q) => { panes[i].filter = q; render(); },
     onTabNew: async (i) => { await tabNew(panes[i], panes[i].path); saveTabs(); render(); },
     onTabClose: async (i, tabIdx) => { if (await tabClose(panes[i], tabIdx)) { saveTabs(); render(); } },
@@ -178,6 +227,11 @@ function render() {
     onViewChange: (i, view) => { panes[i].view = view; saveTabs(); render(); },
     cmdRailOpen: settings.cmdRailOpen ?? null,
     onCmdRailToggle: (id) => { settings.cmdRailOpen = id; saveSettings(); render(); },
+    previewOpen: !!settings.previewOpen,
+    onPreviewToggle: () => { settings.previewOpen = !settings.previewOpen; saveSettings(); render(); },
+    pushPreview: (paneIdx) => pushPreviewForPane(paneIdx),
+    sidebarMode: settings.sidebarMode || 'quick',
+    onSidebarModeChange: (m) => { settings.sidebarMode = m; saveSettings(); render(); },
     onRename: async (i, oldName, newName) => {
       const p = panes[i];
       p.renaming = null;
@@ -204,20 +258,122 @@ function render() {
       saveTabs();
       render();
     },
+    // Drops from stock Explorer (or any source that exposes text/uri-list).
+    // Each source path is copied/moved into the destination pane keeping
+    // its basename. Same source can't be confused with our internal
+    // drag because pane.js routes only when activeDrag is null.
+    onForeignDrop: async (dstIdx, paths, op) => {
+      if (!paths?.length) return;
+      const dst = panes[dstIdx];
+      const fn = op === 'copy' ? fs.copy : fs.move;
+      for (const src of paths) {
+        const target = fs.joinPath(dst.path, fs.basename(src));
+        try { await fn(src, target); }
+        catch (e) { console.warn(`foreign ${op} ${src} -> ${target}:`, e); }
+      }
+      await safeLoad(dst);
+      activePane = dstIdx;
+      saveTabs();
+      render();
+    },
     rerender: render,
   };
   document.documentElement.dataset.theme = ctx.theme;
   document.documentElement.dataset.direction = ctx.direction;
+  document.documentElement.dataset.maximized = ctx.maximized ? '1' : '0';
   dir.fn(root, ctx);
+  applyDraggableRegions();
+}
+
+// Wire every [data-drag-region] in the freshly rendered DOM up to
+// Neutralino's window-drag handler. Re-rendering creates new elements
+// each pass, so old handlers are GC'd with their nodes -- no manual
+// teardown needed. No-op in mock mode (browser preview).
+function applyDraggableRegions() {
+  const N = window.Neutralino;
+  if (!N || !N.window || !N.window.setDraggableRegion) return;
+  document.querySelectorAll('[data-drag-region]').forEach((el) => {
+    try { N.window.setDraggableRegion(el); }
+    catch (e) { console.warn('setDraggableRegion failed:', e); }
+  });
+}
+
+function pushPreviewForPane(paneIdx) {
+  const pane = panes[paneIdx];
+  if (!pane) return;
+  const name = [...pane.selected][0];
+  if (!name) { showPreviewFor(null); return; }
+  // In search mode, results carry their own paths; otherwise reconstruct
+  // from the pane's current directory.
+  let entry = null;
+  if (pane.search?.results) entry = pane.search.results.find((e) => e.name === name) || null;
+  if (!entry) entry = pane.entries.find((e) => e.name === name) || null;
+  showPreviewFor(entry);
 }
 
 async function handleActivate(paneIdx, entry) {
   if (entry.is_dir) {
+    clearSearch(panes[paneIdx]);
     await navigate(panes[paneIdx], entry.path);
     render();
   } else {
     await fs.openInOS(entry.path);
   }
+}
+
+// Recursive search: streams matches into pane.search.results and re-renders
+// every 80 ms while the walker runs. Cancellable; navigation auto-clears.
+function runRecursiveSearch(paneIdx, query) {
+  const pane = panes[paneIdx];
+  if (!pane || !query) return;
+  cancelSearch(pane);
+  const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  pane.search = {
+    query,
+    root: pane.path,
+    results: [],
+    progress: { matched: 0, scanned: 0, done: false },
+    abort: controller,
+  };
+  render();
+  let pendingRender = false;
+  const scheduleRender = () => {
+    if (pendingRender) return;
+    pendingRender = true;
+    setTimeout(() => {
+      pendingRender = false;
+      // Render only if this is still the active search (handles cancel +
+      // restart races).
+      if (panes[paneIdx]?.search === pane.search) render();
+    }, 80);
+  };
+  recursiveSearch({
+    root: pane.path,
+    query,
+    signal: controller?.signal,
+    onMatch: (entry) => {
+      if (panes[paneIdx]?.search !== pane.search) return;
+      pane.search.results.push(entry);
+      scheduleRender();
+    },
+    onProgress: (p) => {
+      if (panes[paneIdx]?.search !== pane.search) return;
+      pane.search.progress = p;
+      if (p.done) render();
+      else scheduleRender();
+    },
+  }).catch((e) => console.warn('recursiveSearch failed:', e));
+}
+
+function cancelSearch(pane) {
+  if (!pane?.search) return;
+  try { pane.search.abort?.abort(); } catch {}
+}
+
+function clearSearch(pane) {
+  if (!pane?.search) return;
+  cancelSearch(pane);
+  pane.search = null;
 }
 
 async function doAction(action) {
@@ -304,6 +460,19 @@ async function doAction(action) {
       await fs.copyPath(target);
       break;
     }
+    case 'dragOut': {
+      // OS drag egress via the helper's DoDragDrop verb. The helper
+      // blocks while the user holds the drag; on release we refresh
+      // the source pane in case the drop was a Move.
+      if (!pane.selected.size) return;
+      const paths = [...pane.selected].map((n) => fs.joinPath(pane.path, n));
+      const effect = await fs.dragOut(paths);
+      if (effect === 2 /* DROPEFFECT_MOVE */) {
+        await safeLoad(pane);
+        render();
+      }
+      break;
+    }
     case 'deletePerm': {
       if (!pane.selected.size) return;
       if (!confirm(`Permanently delete ${pane.selected.size} item(s)? This cannot be undone.`)) return;
@@ -334,6 +503,17 @@ async function doAction(action) {
       render();
       break;
     }
+    case 'previewToggle': {
+      settings.previewOpen = !settings.previewOpen;
+      saveSettings();
+      render();
+      break;
+    }
+    case 'terminalToggle': {
+      toggleTerminal();
+      render();
+      break;
+    }
     case 'tabNew': {
       await tabNew(pane, pane.path);
       saveTabs();
@@ -350,15 +530,47 @@ async function doAction(action) {
   }
 }
 
+// True when the integrated terminal owns keyboard focus. Drives the
+// "explorer vs terminal" zone gate in bindGlobalKeys -- when this is
+// true, only Ctrl+` / Ctrl+K reach the explorer; everything else stays
+// in the terminal input.
+function isTerminalFocused() {
+  const a = document.activeElement;
+  return !!(a && a.closest && a.closest('.term'));
+}
+
 function bindGlobalKeys() {
   document.addEventListener('explorer:action', (e) => doAction(e.detail));
+  document.addEventListener('explorer:select-change', (e) => {
+    if (!settings.previewOpen) return;
+    // Mirror the active pane's first selection into the preview pane.
+    // Cross-pane clicks change activePane via the existing flow; this
+    // listener just reads whichever pane is current at event time.
+    const idx = e.detail?.paneIdx ?? activePane;
+    pushPreviewForPane(idx);
+  });
+  // Click anywhere outside the terminal panel returns keyboard focus to
+  // the explorer side, so explorer shortcuts (F2 / Del / type-to-jump /
+  // Backspace-up) start working again. Without this, focus would stay
+  // trapped in the terminal input after the user clicks a pane row.
+  document.addEventListener('mousedown', (e) => {
+    if (!isTerminalFocused()) return;
+    if (e.target instanceof Element && e.target.closest('.term')) return;
+    document.activeElement?.blur?.();
+  });
   document.addEventListener('keydown', (e) => {
-    // Both directions now anchor the palette to a visible input
-    // (`.palette-input`) embedded in their chrome. Ctrl+K focuses it;
-    // Ctrl+L focuses it pre-filled with the active pane's path. The
-    // standalone overlay path is kept as a fallback for environments
-    // where the input isn't in the DOM.
+    // Always-global shortcuts -- these work regardless of which zone
+    // currently owns focus, because they're how the user *switches*
+    // zones in the first place.
+    if ((e.ctrlKey || e.metaKey) && e.key === '`') {
+      // Ctrl+` toggles the integrated terminal in either direction.
+      e.preventDefault();
+      toggleTerminal();
+      render();
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+      // Palette is intentionally cross-zone -- works from terminal too.
       const input = document.querySelector('input.palette-input');
       if (input) {
         e.preventDefault();
@@ -368,6 +580,21 @@ function bindGlobalKeys() {
         e.preventDefault();
         openPalette({ ctx: paletteCtx, getPane: () => panes[activePane] });
       }
+      return;
+    }
+
+    // Below this line: explorer-only. When terminal owns focus, none of
+    // these fire -- the keystrokes belong to the shell input. The user
+    // returns to explorer mode by clicking a pane (mousedown listener
+    // above blurs the terminal) or by toggling the terminal off.
+    if (isTerminalFocused()) return;
+
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'P')) {
+      // Ctrl+P toggles the right-side preview pane.
+      e.preventDefault();
+      settings.previewOpen = !settings.previewOpen;
+      saveSettings();
+      render();
       return;
     }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L')) {
@@ -405,16 +632,35 @@ function bindGlobalKeys() {
       if (pane?.selected.size) { pane.selected.clear(); render(); }
     }
     else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      // Type-to-jump (Windows Explorer style): printable keys accumulate
-      // into a prefix buffer for 750 ms; the active pane jumps to the
-      // first row whose name starts with the buffer. Doesn't filter the
-      // list — selection moves only.
+      // Type-to-jump (Windows Explorer style):
+      //   - single-letter press always cycles to the *next* row whose
+      //     name starts with that letter, walking the matches relative
+      //     to the current selection. Repeating the same letter walks
+      //     forward through the match list and wraps.
+      //   - different letters in quick succession (within the 1.2 s
+      //     window) accumulate into a prefix and jump to the first
+      //     match of the prefix (so v, i jumps to "Videos").
+      //
+      // The previous version relied on typeBuf still containing the
+      // letter on the second press; if the timer fired or render took
+      // a tick too long, typeBuf reset to '' and the second press
+      // looked like a fresh first press, staying on "Videos". The
+      // current logic treats "buffer empty OR buffer is all the same
+      // char as ch" as cycle mode -- so cycling works regardless of
+      // timing, and only a different letter pressed before the
+      // timeout extends the prefix.
       const ch = e.key.toLowerCase();
       if (!/[a-z0-9._\-+ ]/.test(ch)) return;
-      typeBuf += ch;
+      const cycle = !typeBuf || [...typeBuf].every((c) => c === ch);
+      if (cycle) {
+        typeBuf = ch;
+        typeJump(ch, /* cycle */ true);
+      } else {
+        typeBuf += ch;
+        typeJump(typeBuf, /* cycle */ false);
+      }
       clearTimeout(typeBufTimer);
-      typeBufTimer = setTimeout(() => { typeBuf = ''; }, 750);
-      typeJump(typeBuf);
+      typeBufTimer = setTimeout(() => { typeBuf = ''; }, 1200);
     }
   });
 }
@@ -422,11 +668,24 @@ function bindGlobalKeys() {
 let typeBuf = '';
 let typeBufTimer = null;
 
-function typeJump(prefix) {
+function typeJump(prefix, cycle) {
   const pane = panes[activePane];
   if (!pane || !pane.entries.length) return;
-  const found = pane.entries.find((it) => it.name.toLowerCase().startsWith(prefix));
-  if (!found) return;
+  // Walk in the visible order (folders-first, current sort key) so the
+  // match the user sees on screen is the match we land on.
+  const items = sortedEntries(pane);
+  const matches = items.filter((it) => it.name.toLowerCase().startsWith(prefix));
+  if (!matches.length) return;
+  let found;
+  if (cycle) {
+    // Continue from after the currently selected row, wrapping around
+    // so the last v-match -> first v-match feels continuous.
+    const current = [...pane.selected][0];
+    const idx = matches.findIndex((m) => m.name === current);
+    found = matches[(idx + 1) % matches.length];
+  } else {
+    found = matches[0];
+  }
   pane.selected.clear();
   pane.selected.add(found.name);
   render();
