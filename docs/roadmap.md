@@ -5,18 +5,20 @@ state lives in [`design.md`](./design.md); repository conventions live
 in [`../CLAUDE.md`](../CLAUDE.md). This file is the source of truth for
 **what's painted but not wired**, and **what hasn't been started**.
 
-Status as of the Phase 7 branch (`feat/phase-7`):
-post-MVP, pre-v1. Phases 1, 1.5, 2, 3, 4, 5, 6a, 6b, and 7
-have shipped. The Workspace direction has been removed; the
-remaining directions are Fluent (A) and Cmd (B). Remaining
-work: the **Phase 8 polish + scaling pass** (big-dir listing
-perf, tree virtualization, real PTY-backed terminal, copy/move
-progress + conflict UI, selection keyboard ergonomics, and
-in-app dialogs to replace the native `prompt()` / `confirm()`
-that breaks the Mica chrome), the **Phase 9 Crew (Copilot CLI)
-integration** (shell out to the `crew` binary so users can ask
-natural-language questions about the file they're looking at),
-and the items in [Open questions / debt](#open-questions--debt).
+Status as of the Phase 8b branch (`feat/phase-8b-pty-terminal`):
+post-MVP, pre-v1. Phases 1, 1.5, 2, 3, 4, 5, 6a, 6b, 7, and **8b**
+(real PTY-backed terminal via ConPTY + xterm.js) have shipped.
+The Workspace direction has been removed; the remaining
+directions are Fluent (A) and Cmd (B). Remaining Phase 8 work:
+**8a** big-dir listing perf + tree virtualization, **8c**
+copy/move progress + conflict UI + cancellation, **8d**
+selection keyboard ergonomics (Ctrl+A, Shift+arrows), and
+**8e** in-app dialogs to replace the native `prompt()` /
+`confirm()` that breaks the Mica chrome. After that,
+**Phase 9 Crew (Copilot CLI) integration** (shell out to the
+`crew` binary so users can ask natural-language questions about
+the file they're looking at), plus the items in [Open questions
+/ debt](#open-questions--debt).
 
 ## Shipped
 
@@ -722,37 +724,55 @@ Two related "things slow down on big trees" fixes, batched.
 - Out of scope: lazy-load row stats inside the *tree* (it only
   shows folder names, no size/modified). Just the directory pane.
 
-#### 8b — Helper rebuild + ConPTY + xterm.js (~4 days)
+#### ~~8b — Helper rebuild + ConPTY + xterm.js~~ (shipped)
 
 The promised real terminal upgrade. Phase 7g shipped a
-line-oriented stub that breaks for vim / less / top; this phase
-delivers the proper PTY-backed terminal.
+line-oriented stub that broke for vim / less / top; 8b delivers
+a proper PTY-backed terminal.
 
-- **Helper rebuild.** `extras/shellhelp.exe` needs a fresh
-  Windows MSVC pass to pick up the `thumb` + `dragout` verbs from
-  Phase 7e *and* the new `pty` verb landing here. Ship the
-  rebuild as part of this phase so 7e and 8b light up together.
-- **`pty` helper verb.** `tools/shellhelp.cpp` gains a ConPTY
-  wrapper: `CreatePseudoConsole`, `ResizePseudoConsole`,
-  `ClosePseudoConsole`. Spawns the chosen shell under the PTY,
-  forwards bytes both ways via stdin/stdout, accepts JSON
-  control messages on a sentinel-prefixed stdin line for resize.
-- **xterm.js renderer.** Vendor xterm.js into `extras/xterm/`
-  (no CDN — the app must work offline). Replace `src/terminal.js`
-  v1's `<pre>` + input pair with an xterm.js Terminal mounted
-  in `.term__body`. Bytes from the helper feed `term.write(buf)`;
-  user keystrokes feed `term.onData(d => helper.stdin.write(d))`.
-- **Resize plumbing.** `ResizeObserver` on the panel computes
-  cols/rows from `term.cols / term.rows`, sends a JSON resize
-  message to the helper, helper calls `ResizePseudoConsole`.
-- **Fallback.** Keep the line-oriented v1 path behind a
-  `settings.terminal.usePty: false` toggle so users on
-  Windows < 1809 (no ConPTY) or with a missing helper still get
-  the v1 experience. Auto-detect at first launch.
-- **Risks.** ConPTY's escape-sequence translation is imperfect;
-  xterm.js's chunked-write performance under burst output may
-  need a 16 ms flush coalesce. xterm.js bundle is ~200 KB —
-  acceptable but the largest single dep we'll have shipped.
+Shipped on `feat/phase-8b-pty-terminal`:
+
+- **`pty` helper verb** in `tools/shellhelp.cpp` wrapping
+  `CreatePseudoConsole` / `ResizePseudoConsole` /
+  `ClosePseudoConsole` (resolved at runtime via `GetProcAddress`
+  so the binary still loads on Windows < 1809 — verb returns
+  exit code 3 when ConPTY isn't present). Two `_beginthreadex`
+  pumps move bytes between the helper's stdin/stdout and the
+  PTY input/output pipes.
+- **OSC-framed resize control.** JS injects
+  `ESC ] SE_CTL ; resize ; <cols> ; <rows> BEL` on stdin; the
+  helper's stdin pump scans for that prefix, intercepts the
+  message, and calls `ResizePseudoConsole`. Everything else
+  passes through to the PTY untouched. `PTY_CTL_PREFIX` /
+  `PTY_CTL_TERM` constants kept in sync between
+  `tools/shellhelp.cpp` and `src/terminal.js`.
+- **xterm.js renderer.** Vendored offline at
+  `src/vendor/xterm/` (core 5.5.0 + addon-fit 0.10.0 +
+  addon-web-links 0.11.0; ~290 KB total, single-file UMD
+  bundles). Loaded via plain `<script>` tags from
+  `src/index.html`; no bundler step. `src/terminal.js`'s
+  `<pre>` + input pair is replaced by `term.open(mount)` with
+  `term.onData → helper.stdin` and `helper.stdout → term.write`.
+- **Resize plumbing.** `ResizeObserver` on the mount node, rAF-
+  coalesced, calls `fit.fit()` then `sendResize(tab)` so the
+  helper sees the new grid before xterm finishes the paint.
+- **No half-broken fallback.** Phase 7g's line-oriented v1 is
+  gone. When `extras/shellhelp.exe` is absent, the panel shows
+  a one-paragraph "build the helper or grab the CI artifact"
+  notice instead of trapping the user in a stub that mangles
+  vim. Cleaner failure mode than the original `usePty: false`
+  toggle plan.
+- **CI build pipeline.** A separate
+  `ci/build-shellhelp` branch landed `.github/workflows/build-shellhelp.yml`
+  so the helper is rebuilt on every change to `tools/shellhelp.cpp`
+  via `windows-latest` + `ilammy/msvc-dev-cmd`, uploaded as the
+  `shellhelp` artifact, and pulled into `extras/` via
+  `gh run download`. Removes the local-MSVC dependency that had
+  been blocking 8b for weeks.
+- **Tab history / completion / ANSI colors.** All handled by
+  the shell now (real readline / PSReadLine / cmd doskey through
+  the PTY) — the v1 client-side fakes are gone. vim, less,
+  top, ssh password prompts, and tab completion all work.
 
 #### 8c — Copy/move polish: progress, conflict, cancel (~2 days)
 

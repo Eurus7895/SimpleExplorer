@@ -1,0 +1,20 @@
+@xterm/xterm           5.5.0
+@xterm/addon-fit       0.10.0
+@xterm/addon-web-links 0.11.0
+
+Vendored from https://registry.npmjs.org/.
+
+To refresh:
+  npm view @xterm/xterm versions --json
+  npm pack @xterm/xterm@<v> @xterm/addon-fit@<v> @xterm/addon-web-links@<v>
+  tar -xzf <each>.tgz
+  cp package/lib/xterm.js           src/vendor/xterm/xterm.js
+  cp package/css/xterm.css          src/vendor/xterm/xterm.css
+  cp package/lib/addon-fit.js       src/vendor/xterm/addon-fit.js
+  cp package/lib/addon-web-links.js src/vendor/xterm/addon-web-links.js
+  cp package/LICENSE                src/vendor/xterm/LICENSE
+
+UMD bundles attach to globalThis:
+  window.Terminal           — main constructor (from xterm.js)
+  window.FitAddon.FitAddon  — resize-to-container helper
+  window.WebLinksAddon.WebLinksAddon — clickable URL parser

@@ -179,7 +179,7 @@ function psQuote(s) {
 // PowerShell paths so the app keeps working.
 const HELPER_PATH = 'extras\\shellhelp.exe';
 let helperReady = null;
-async function helperAvailable() {
+export async function helperAvailable() {
   if (!N) return false;
   if (helperReady !== null) return helperReady;
   helperReady = N.filesystem.getStats(HELPER_PATH).then(() => true).catch(() => false);
