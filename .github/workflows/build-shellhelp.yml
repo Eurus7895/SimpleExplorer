@@ -1,14 +1,25 @@
 name: Build shellhelp.exe
 
 # Compiles tools/shellhelp.cpp on a Windows runner so contributors don't
-# need MSVC on their own machine. Uploaded as a workflow artifact named
-# `shellhelp` -- pull it down with:
+# need MSVC on their own machine, then commits the resulting binary back
+# to the same branch under extras/shellhelp.exe (the path the runtime
+# expects). The binary is intentionally tracked in git -- end users
+# never need a compiler -- so auto-attaching the build keeps every
+# branch self-contained: pushing a tools/shellhelp.cpp change triggers a
+# rebuild + a follow-up commit on the same branch, no manual artifact
+# download required.
+#
+# The follow-up commit only touches extras/shellhelp.exe, which is *not*
+# in the paths filter below, so it does not re-trigger the workflow --
+# no infinite loop. The "[skip ci]" tag in the commit message is belt-
+# and-braces; the path filter already does the work.
+#
+# Pull requests still get a green/red signal but do NOT receive the
+# follow-up commit -- a PR may originate from a fork, and pushing back
+# from a fork-clone requires permissions GITHUB_TOKEN doesn't have.
+# For PRs the artifact upload remains as a fallback path:
 #
 #   gh run download --name shellhelp --dir extras/
-#
-# from the repo root, then commit `extras/shellhelp.exe` if the rebuild
-# is intentional. The exe is intentionally tracked in git so end users
-# never need a compiler (per tools/build.md).
 
 on:
   push:
@@ -23,11 +34,20 @@ on:
       - '.github/workflows/build-shellhelp.yml'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Persist the token so the commit-back step can push without
+          # re-authenticating. Default checkout already does this; set
+          # explicitly for clarity.
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
 
       # ilammy/msvc-dev-cmd puts cl.exe + the Windows SDK headers/libs on
       # PATH for subsequent steps -- equivalent to launching a "Developer
@@ -58,3 +78,26 @@ jobs:
           path: extras/shellhelp.exe
           if-no-files-found: error
           retention-days: 30
+
+      # Commit the rebuilt binary back to the branch that triggered the
+      # build so users don't have to download the artifact manually.
+      # Skipped on pull_request events (forks have no push rights) and
+      # when the binary is byte-identical to what's already committed
+      # (no-op pushes pollute history).
+      - name: Commit binary back to branch
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          git add extras/shellhelp.exe
+          if git diff --cached --quiet; then
+            echo "extras/shellhelp.exe is unchanged; skipping commit."
+            exit 0
+          fi
+          # Identity matches the project's standing rule (CLAUDE.md):
+          # author + committer must be Eurus <t.hoang7895@gmail.com>.
+          # Using -c flags rather than `git config` so we don't mutate
+          # the runner's persistent config.
+          git -c user.name='Eurus' \
+              -c user.email='t.hoang7895@gmail.com' \
+              commit -m "build(helper): rebuild shellhelp.exe via CI [skip ci]"
+          git push origin HEAD:${{ github.ref_name }}

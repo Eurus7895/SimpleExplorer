@@ -8,18 +8,24 @@ real terminal.
 
 ## Two ways to build
 
-### Preferred: GitHub Actions (no local toolchain)
+### Preferred: GitHub Actions (no local toolchain, auto-attached)
 
 `.github/workflows/build-shellhelp.yml` runs on every push that touches
-`tools/shellhelp.cpp` (or via `workflow_dispatch`) and uploads the
-compiled binary as an artifact named `shellhelp`. To pull it locally:
+`tools/shellhelp.cpp` (or via `workflow_dispatch`), compiles the helper
+on `windows-latest` with MSVC, and **commits the resulting binary back
+to the same branch** as `extras/shellhelp.exe`. No manual download
+step: just `git pull` after the workflow run completes and the binary
+is in your tree, ready to ship.
+
+The follow-up commit only modifies `extras/shellhelp.exe` (which is
+not in the workflow's path filter), so it does not re-trigger the
+workflow — no infinite loop. Pull-request runs do *not* commit back
+(forks lack push rights via `GITHUB_TOKEN`); for those, the binary
+is also uploaded as an artifact named `shellhelp`:
 
 ```
 gh run download --name shellhelp --dir extras/
 ```
-
-Commit `extras/shellhelp.exe` if the rebuild is intentional — the exe
-is tracked in git so end users never need a compiler.
 
 ### Local fallback: MSVC
 
