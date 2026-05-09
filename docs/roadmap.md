@@ -488,66 +488,193 @@ background while a foreign drag is over the destination pane;
 an enter/leave depth counter avoids flicker as the cursor
 crosses child elements.
 
-### Phase 7 — Larger features (deferred, design needed)
+### Phase 7 — Larger features (sequenced)
 
-These need their own short plan before starting; rough cost in days.
+The flat list of "deferred" Phase 7 items is now broken into seven
+sub-phases (7a–7g), ordered cheapest-and-most-visible first,
+helper-dependent work batched together, terminal last because it is
+the largest single bet. Total ~14–16 days. Each sub-phase ships on
+its own `feat/phase-7…` branch off `origin/main` with a single
+commit per CLAUDE.md's branch policy.
 
-- **Tree view** in the sidebar (~2 days) — virtualized tree over real FS,
-  expand/collapse, persist expansion state.
-- **Recursive search** (~2 days) — background walk, cancellation, results
-  pane, hit highlighting.
-- **Native Windows shell context menu** — *promoted to Phase 1.5*.
-- **Mica + frameless chrome** (~1 day) — `borderless: true` in
-  `neutralino.config.json`, custom title-bar component, hit-testing for
-  drag region; matches Direction A's design intent.
-- **Thumbnails** (~3 days) — async generation via Shell COM
-  (`IShellItemImageFactory::GetImage`), in-memory LRU cache, fallback
-  to kind icons. Requires the helper exe.
-- **File preview pane** (~2 days) — text / image / PDF / md preview;
-  separate column, toggleable.
-- **Integrated terminal in Direction B** (~3–5 days) — VS Code-style
-  bottom panel with a real terminal emulator. Cmd direction only; the
-  Fluent skin keeps the existing right-click "Open in Terminal" external
-  spawn. Stack:
-  - Frontend: [`xterm.js`](https://xtermjs.org/) (same emulator VS Code
-    uses), rendered into a resizable bottom panel below `b-grid`.
-    Toggleable via Ctrl+\` and a rail icon. Multiple terminals as tabs.
-  - Backend: a new native helper verb `pty` that wraps the Windows
-    [ConPTY](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session)
-    APIs (`CreatePseudoConsole`, `ResizePseudoConsole`,
-    `ClosePseudoConsole`). Spawns the user's chosen shell under the
-    PTY and pipes bytes both ways. Lives in `tools/shellhelp.cpp`
-    alongside the existing verbs to keep the toolchain story unchanged.
-  - Shell selection (matches VS Code): on first launch, detect available
-    shells in PATH (`pwsh.exe` → `powershell.exe` → `cmd.exe` →
-    `bash.exe` from Git for Windows → WSL), present a one-time
-    quick-pick overlay, and persist the chosen shell to
-    `localStorage` under `simple-explorer.terminal.shell`. Settings
-    UI later allows changing the default and adding profiles.
-  - Working directory (matches VS Code): when a new terminal is
-    opened, its cwd is the active pane's current path at that
-    moment. Once opened, terminals do **not** auto-`cd` when the
-    active pane navigates — they're independent. Add a right-click
-    "Open in integrated terminal" action on folders that opens a
-    new terminal tab at that path (mirrors VS Code's command).
-  - IPC: bidirectional bytes between JS and the helper. Neutralino's
-    `os.spawnProcess` + `events.on('spawnedProcess', …)` carries
-    stdout/stderr in chunks; for stdin we use `os.updateSpawnedProcess`.
-    Resize events flow as JSON control messages on a sentinel-prefixed
-    line.
-  - Out of scope for v1: split terminals inside the panel, search,
-    profile UI beyond the first-launch picker, restoring sessions
-    across app restarts.
-  - Risks: ConPTY's escape-sequence translation is good but imperfect
-    (some TUI apps still misbehave on resize); Neutralino's chunked
-    output may need a 16 ms flush coalesce to avoid tearing. Cheap
-    fallback for environments without ConPTY (Windows < 1809): plain
-    `os.spawnProcess` of the shell with no PTY semantics — works for
-    line-oriented commands, breaks for vim/less.
-- **Drag-and-drop with the OS** (~2 days) — accept drops from stock
-  Explorer (HTML5 dataTransfer to FS path resolution), drag from our
-  panes back out (Neutralino currently can't initiate OS drags — needs
-  a native helper).
+Summary:
+
+| Sub-phase | Feature | Size | Helper? | Risk |
+| --- | --- | --- | --- | --- |
+| 7a | Mica + frameless chrome | 1d | no | low |
+| 7b | Recursive search | 2d | no | low |
+| 7c | OS DnD (drop side) | 1d | no | low |
+| 7d | File preview pane (text/img/md/PDF) | 2d | no | low |
+| 7e | Thumbnails + DnD egress (helper batch) | 3d | **yes** (new verbs) | med |
+| 7f | Tree view | 2d | no | med (layout) |
+| 7g | Integrated terminal | 3–5d | **yes** (ConPTY verb) | high |
+
+#### 7a — Mica + frameless chrome (~1 day)
+
+Smallest, most-visible, no helper / FS work. Closes the gap with
+Direction A's design intent.
+
+- Set `borderless: true` in `neutralino.config.json`.
+- Custom title-bar component in `src/directions/fluent.js` with
+  `Neutralino.window.setDraggableRegion` for the drag area; existing
+  `─ ☐ ✕` controls stay (already wired in Phase 1).
+- Apply Mica via WebView2's backdrop hint where available
+  (`Neutralino.window.setMicaEffect()` if exposed; otherwise CSS
+  acrylic/blur fallback for older Windows builds and non-Win11).
+- Risk: Mica needs Win11 22H2+. Detect at runtime via `NL_OS` /
+  build number; degrade to flat acrylic gracefully.
+
+#### 7b — Recursive search (~2 days)
+
+Pure JS over `Neutralino.filesystem.readDirectory`. Slots into the
+existing palette (Cmd) and search input (Fluent). No helper work.
+
+- New `src/search.js` with a cancellable async walker:
+  BFS queue, chunked yields (~16 ms slice budget), AbortController
+  for cancel. Skips reparse points and obvious noise (`node_modules`,
+  `.git`) only when explicitly opted in via a settings toggle —
+  default is "search everything visible".
+- Cmd palette: when query has no `>`, `/`, `\`, or `<X>:` prefix and
+  there's an active pane, palette flips to a "Search inside <pane
+  path>…" mode after Enter.
+- Fluent: existing `.searchInput` already filters visible rows on
+  type; add Enter to escalate to a recursive walk. A new results
+  view replaces the rows grid until cleared (Esc / clear button).
+- Filename match only in v1 (substring, locale-aware,
+  case-insensitive). Hit highlighting via a wrapper span around the
+  matched substring.
+- Cancel triggers: new keystroke, pane navigation, Esc, switching
+  directions, switching panes.
+- Out of scope: content search, regex, glob include/exclude UI.
+
+#### 7c — OS DnD drop side (~1 day)
+
+Receive drops from stock Explorer. The egress half (drag *out* of
+SimpleExplorer) needs the native helper and is deferred to 7e.
+
+- Wire `dragenter` / `dragover` / `drop` on the rows container in
+  `src/pane.js` (already partially in place from 6b.2 for in-app
+  drags).
+- Read `dataTransfer.types`; when `Files` or `text/uri-list` is
+  present, treat as a foreign drop and route through the existing
+  `ctx.onDrop()` from 6b.2 with copy as the default and Shift = move.
+- Drive-letter compare via `fs.sameDrive` decides cursor (already
+  exists from 6b.2).
+- Visual cue reuses the `.rows--drop` accent ring from 6b.2.
+- Egress (dragging files *from* SimpleExplorer into Explorer)
+  intentionally deferred — needs `DoDragDrop` in the helper. See 7e.
+
+#### 7d — File preview pane (~2 days, includes PDF + markdown)
+
+Right-side toggleable preview pane. No helper work. Establishes the
+side-panel layout we'll reuse for thumbnails.
+
+- New right-side pane in `src/directions/fluent.js` and
+  `src/directions/cmd.js`, ~320 px default width, draggable splitter
+  reusing `applyLayout`'s gutter mechanic. Toggleable via `Ctrl+P`
+  and a Fluent command-bar button / Cmd rail icon. Persist toggle
+  state per direction under `settings.preview.open`.
+- New `src/preview.js` dispatch:
+  - **Text** (`.txt`, `.json`, `.yaml`, `.toml`, `.ini`, `.log`,
+    `.csv`, source files): chunked read, first 1 MB, monospace.
+  - **Image** (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`,
+    `.ico`): `<img src="file:///…">`.
+  - **Markdown** (`.md`): rendered HTML via a tiny inlined
+    markdown-it (or hand-rolled CommonMark subset — heading, bold,
+    italic, code, lists, links, images). Sandboxed (no script
+    execution); links open via `Neutralino.os.open`.
+  - **PDF** (`.pdf`): rendered via [`pdf.js`](https://mozilla.github.io/pdf.js/)
+    embedded as a vendored `extras/pdfjs/` (or via the Mozilla CDN
+    behind `Neutralino.extensions` if offline use isn't required).
+    First-page render only in v1; pager controls deferred.
+  - **Other** (binary / unknown): kind icon + size + modified date.
+- Updates on selection change in the active pane (debounced 80 ms
+  to avoid thrash during arrow-key navigation).
+- Out of scope for v1: video / audio playback, syntax highlighting,
+  diff view, multi-page PDF navigation.
+
+#### 7e — Native helper batch: thumbnails + DnD egress (~3 days)
+
+Both need new C++ verbs in `tools/shellhelp.cpp`; batched to share
+build/test cycles.
+
+- **Thumbnails** (`thumb` verb): `IShellItemImageFactory::GetImage`
+  → emits PNG bytes on stdout (or a small temp file path printed to
+  stdout for cleanliness; helper deletes on exit).
+  - JS-side LRU keyed `path|mtime|requestedSize`; default cache 256
+    entries, evict oldest. Tiles view consumes first; details view
+    keeps kind icons (perf).
+  - Async fill pattern from Phase 1.5 (curated first, helper fills
+    in) — render kind icon synchronously, replace with thumb when
+    helper returns.
+  - Fallback: when helper missing, return early — kind icons stay.
+- **DnD egress** (`dragout` verb): construct an `IDataObject` with
+  `CF_HDROP` for the selected paths and call `DoDragDrop` with
+  `DROPEFFECT_COPY | DROPEFFECT_MOVE`. The helper blocks while the
+  user holds the mouse; on drop it returns the chosen effect on
+  stdout so JS can decide whether to refresh the source pane.
+  - JS triggers via `os.execCommand` on `dragstart` when the cursor
+    is moving toward outside the app window. Detection heuristic:
+    if `dragend` fires with `dataTransfer.dropEffect === 'none'` and
+    the cursor is outside the window bounds, escalate to helper.
+    (Cleaner alternative: always escalate; HTML5 in-app DnD from
+    6b.2 stops working — too disruptive. Stick with the heuristic.)
+- `tools/build.md` updated with the new verbs.
+- `docs/design.md` "Native helpers" table extended.
+
+#### 7f — Tree view (~2 days)
+
+Sidebar tree of folders rooted at drives. Virtualized so 50 k+ node
+trees stay snappy.
+
+- New `src/tree.js`: windowed render — only the rows currently
+  inside the scroll viewport are present in the DOM, padded with a
+  spacer above/below to preserve scrollbar geometry. Row height
+  fixed (24 px) so virtualization math stays trivial.
+- Expand / collapse persists to `simple-explorer.tree.expanded` (set
+  of paths). Lazy-loads children on first expand.
+- Click a node = navigate the active pane to that folder.
+  Right-click = same context menu as a row (curated + shell extensions
+  via `helperMenu`).
+- Sidebar gains a tab-style switcher between Tree / Quick access.
+  Default keeps quick access (current behavior); user opt-in to tree.
+- Risk: large drives / network shares can stall on initial
+  enumeration. Mitigation: `readDirectory` per node is already
+  async; show a spinner per row.
+
+#### 7g — Integrated terminal in Direction B (~3–5 days)
+
+Largest, riskiest single feature. Cmd direction only; the Fluent
+skin keeps "Open in Terminal" as an external spawn.
+
+- **Frontend:** [`xterm.js`](https://xtermjs.org/) (same emulator
+  VS Code uses) rendered into a resizable bottom panel below
+  `b-grid`. Toggleable via `Ctrl+\`` and a Cmd rail icon. Multiple
+  terminals as tabs.
+- **Backend:** new `pty` verb in `tools/shellhelp.cpp` wrapping
+  the Windows [ConPTY](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session)
+  APIs (`CreatePseudoConsole`, `ResizePseudoConsole`,
+  `ClosePseudoConsole`). Spawns the chosen shell under the PTY and
+  pipes bytes both ways.
+- **Shell selection** (matches VS Code): on first launch, detect
+  shells in PATH (`pwsh.exe` → `powershell.exe` → `cmd.exe` →
+  Git Bash → WSL); one-time quick-pick overlay; persist to
+  `simple-explorer.terminal.shell`.
+- **Working directory** (matches VS Code): new terminals open at
+  the active pane's current path; thereafter independent — they do
+  not follow pane navigation. Folder right-click gains "Open in
+  integrated terminal".
+- **IPC:** bidirectional bytes via `Neutralino.os.spawnProcess` +
+  `events.on('spawnedProcess', …)`; stdin via
+  `os.updateSpawnedProcess`. Resize events flow as JSON control
+  messages on a sentinel-prefixed line.
+- **Out of scope (v1):** split terminals, search, profile UI beyond
+  the first-launch picker, session restore across app restarts.
+- **Risks:** ConPTY escape-sequence translation imperfect (some
+  TUI apps misbehave on resize); chunked output may need a 16 ms
+  flush coalesce. Cheap fallback for Windows < 1809: plain
+  `os.spawnProcess` without PTY semantics — works for line-oriented
+  commands, breaks for vim/less.
 
 ## Open questions / debt
 
