@@ -3,7 +3,7 @@
 // header. Visuals trace explorer-cmd.jsx in the design bundle.
 
 import { iconHTML } from '../icons.js';
-import { renderRows, buildSegPath, selectionSizeLabel, getRecent } from '../pane.js';
+import { renderRows, buildSegPath, selectionSizeLabel, getRecent, renderSearchBanner } from '../pane.js';
 import { RAIL_ITEMS } from '../sidebar-data.js';
 import { applyLayout } from '../layout.js';
 import { openPalette, closePalette, isPaletteOpen } from '../palette.js';
@@ -224,6 +224,12 @@ function paneCard(ctx, pane, i) {
   more.innerHTML = iconHTML('more', 14);
   head.appendChild(more);
   card.appendChild(head);
+
+  const banner = renderSearchBanner(pane, {
+    onCancel: () => ctx.onCancelSearch(i),
+    onClear: () => ctx.onClearSearch(i),
+  });
+  if (banner) card.appendChild(banner);
 
   const rows = renderRows(pane, {
     paneIdx: i,

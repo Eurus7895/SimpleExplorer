@@ -8,6 +8,7 @@ import { renderFluent, statusBar as fluentStatusBar } from './directions/fluent.
 import { renderCmd } from './directions/cmd.js';
 import { LAYOUT_DEFS, DEFAULT_SPLITS } from './layout.js';
 import { openPalette, isPaletteOpen } from './palette.js';
+import { recursiveSearch } from './search.js';
 
 // Boot the Neutralino client. Safe to call before DOM ready; APIs queue until
 // the runtime handshake completes. No-op when running directly in a browser
@@ -77,8 +78,9 @@ let windowMaximized = false;
 const paletteCtx = {
   get activePane() { return activePane; },
   get panes() { return panes; },
-  onPaneNav: async (i, path) => { await navigate(panes[i], path); saveTabs(); render(); },
+  onPaneNav: async (i, path) => { clearSearch(panes[i]); await navigate(panes[i], path); saveTabs(); render(); },
   onActivateEntry: (i, entry) => handleActivate(i, entry),
+  onRecursiveSearch: (i, query) => runRecursiveSearch(i, query),
 };
 
 async function init() {
@@ -196,10 +198,13 @@ function render() {
     setTheme(t) { settings[dir.themeKey] = t; saveSettings(); render(); },
     setLayout(l) { settings[dir.layoutKey] = l; saveSettings(); render(); },
     onActivateEntry: handleActivate,
-    onPaneNav: async (i, path) => { await navigate(panes[i], path); saveTabs(); render(); },
-    onPaneBack: async (i) => { await goBack(panes[i]); saveTabs(); render(); },
-    onPaneForward: async (i) => { await goForward(panes[i]); saveTabs(); render(); },
-    onPaneUp: async (i) => { await goUp(panes[i]); saveTabs(); render(); },
+    onPaneNav: async (i, path) => { clearSearch(panes[i]); await navigate(panes[i], path); saveTabs(); render(); },
+    onPaneBack: async (i) => { clearSearch(panes[i]); await goBack(panes[i]); saveTabs(); render(); },
+    onPaneForward: async (i) => { clearSearch(panes[i]); await goForward(panes[i]); saveTabs(); render(); },
+    onPaneUp: async (i) => { clearSearch(panes[i]); await goUp(panes[i]); saveTabs(); render(); },
+    onRecursiveSearch: (i, query) => runRecursiveSearch(i, query),
+    onCancelSearch: (i) => cancelSearch(panes[i]),
+    onClearSearch: (i) => { clearSearch(panes[i]); render(); },
     onFilter: (i, q) => { panes[i].filter = q; render(); },
     onTabNew: async (i) => { await tabNew(panes[i], panes[i].path); saveTabs(); render(); },
     onTabClose: async (i, tabIdx) => { if (await tabClose(panes[i], tabIdx)) { saveTabs(); render(); } },
@@ -258,11 +263,67 @@ function applyDraggableRegions() {
 
 async function handleActivate(paneIdx, entry) {
   if (entry.is_dir) {
+    clearSearch(panes[paneIdx]);
     await navigate(panes[paneIdx], entry.path);
     render();
   } else {
     await fs.openInOS(entry.path);
   }
+}
+
+// Recursive search: streams matches into pane.search.results and re-renders
+// every 80 ms while the walker runs. Cancellable; navigation auto-clears.
+function runRecursiveSearch(paneIdx, query) {
+  const pane = panes[paneIdx];
+  if (!pane || !query) return;
+  cancelSearch(pane);
+  const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  pane.search = {
+    query,
+    root: pane.path,
+    results: [],
+    progress: { matched: 0, scanned: 0, done: false },
+    abort: controller,
+  };
+  render();
+  let pendingRender = false;
+  const scheduleRender = () => {
+    if (pendingRender) return;
+    pendingRender = true;
+    setTimeout(() => {
+      pendingRender = false;
+      // Render only if this is still the active search (handles cancel +
+      // restart races).
+      if (panes[paneIdx]?.search === pane.search) render();
+    }, 80);
+  };
+  recursiveSearch({
+    root: pane.path,
+    query,
+    signal: controller?.signal,
+    onMatch: (entry) => {
+      if (panes[paneIdx]?.search !== pane.search) return;
+      pane.search.results.push(entry);
+      scheduleRender();
+    },
+    onProgress: (p) => {
+      if (panes[paneIdx]?.search !== pane.search) return;
+      pane.search.progress = p;
+      if (p.done) render();
+      else scheduleRender();
+    },
+  }).catch((e) => console.warn('recursiveSearch failed:', e));
+}
+
+function cancelSearch(pane) {
+  if (!pane?.search) return;
+  try { pane.search.abort?.abort(); } catch {}
+}
+
+function clearSearch(pane) {
+  if (!pane?.search) return;
+  cancelSearch(pane);
+  pane.search = null;
 }
 
 async function doAction(action) {

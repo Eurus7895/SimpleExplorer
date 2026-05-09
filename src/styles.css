@@ -673,3 +673,41 @@ body.is-resizing-col .row, body.is-resizing-row .row { pointer-events: none; }
 }
 .b-winctl:hover { background: var(--hover); }
 .b-winctl--close:hover { background: #c42b1c; color: #fff; }
+
+/* ── Recursive search (Phase 7b) ─────────────────────────────────── */
+.search-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 12px;
+  background: var(--accent-bg); border-bottom: 1px solid var(--border-soft);
+  font-size: 11.5px; color: var(--text);
+}
+.search-banner__icon { display: inline-flex; color: var(--accent); }
+.search-banner__text {
+  display: flex; align-items: baseline; gap: 6px;
+  min-width: 0;
+}
+.search-banner__text strong { font-weight: 600; color: var(--text); }
+.search-banner__text small {
+  color: var(--text-mute); font-size: 11px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 320px;
+}
+.search-banner__count {
+  margin-left: auto; color: var(--text-mute); font-variant-numeric: tabular-nums;
+}
+.search-banner__btn {
+  height: 22px; padding: 0 10px;
+  background: transparent; border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text); cursor: pointer; font-size: 11.5px;
+}
+.search-banner__btn:hover { background: var(--hover); }
+.search-banner__btn:disabled { opacity: 0.45; cursor: default; }
+.search-banner__btn:disabled:hover { background: transparent; }
+
+.rows--search .row__name { align-items: flex-start; }
+.rows--search .row__label { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.rows--search .row__sub {
+  display: block; font-size: 10.5px; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 100%; margin-top: 1px;
+}

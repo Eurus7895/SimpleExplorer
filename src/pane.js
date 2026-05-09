@@ -195,12 +195,17 @@ export function renderRows(state, opts = {}) {
   const view = state.view || DEFAULT_VIEW;
   if (view === 'compact') list.classList.add('rows--compact');
   else if (view === 'tiles') list.classList.add('rows--tiles');
+  const inSearch = !!(state.search && state.search.results);
+  if (inSearch) list.classList.add('rows--search');
 
   items.forEach((it) => {
     const row = document.createElement('div');
     row.className = 'row';
     row.dataset.name = it.name;
-    row.draggable = true;
+    // Drag + rename are disabled in search-result rows because they would
+    // operate on `pane.path/name` rather than the entry's actual parent
+    // directory, silently doing the wrong thing.
+    row.draggable = !inSearch;
     if (state.selected.has(it.name)) row.classList.add('row--sel');
     if (accent) row.style.setProperty('--row-accent', accent);
 
@@ -234,6 +239,11 @@ export function renderRows(state, opts = {}) {
       requestAnimationFrame(() => label.focus());
       nameCell.innerHTML = iconHTML(kindFor(it));
       nameCell.appendChild(label);
+    } else if (inSearch) {
+      // Search results live in different folders; show the parent path
+      // beneath the name so the user can disambiguate same-named files.
+      const sub = fs.parentPath(it.path) || '';
+      nameCell.innerHTML = `${iconHTML(kindFor(it))}<span class="row__label">${escapeHtml(it.name)}<small class="row__sub">${escapeHtml(sub)}</small></span>`;
     } else {
       nameCell.innerHTML = `${iconHTML(kindFor(it))}<span class="row__label">${escapeHtml(it.name)}</span>`;
     }
@@ -313,7 +323,13 @@ export function renderRows(state, opts = {}) {
   if (!items.length) {
     const empty = document.createElement('div');
     empty.className = 'rows__empty';
-    empty.textContent = state.filter ? 'No matches' : (state.loading ? 'Loading…' : 'Empty');
+    if (inSearch) {
+      empty.textContent = state.search.progress?.done
+        ? `No matches for "${state.search.query}"`
+        : 'Searching…';
+    } else {
+      empty.textContent = state.filter ? 'No matches' : (state.loading ? 'Loading…' : 'Empty');
+    }
     list.appendChild(empty);
   }
 
@@ -369,6 +385,43 @@ export function renderRows(state, opts = {}) {
 // selection or when only folders are selected; suffixes "(files only)"
 // when a folder is selected alongside files (folder size needs a
 // recursive walk we don't do).
+// Banner shown above the rows list when a recursive search is active.
+// Renders inline status (matches / scanned / done|aborted|capped) plus
+// Cancel + Clear actions. Returns null when there's no active search,
+// so callers can `if (banner) card.appendChild(banner)`.
+export function renderSearchBanner(state, { onCancel, onClear }) {
+  if (!state.search) return null;
+  const banner = document.createElement('div');
+  banner.className = 'search-banner';
+  const p = state.search.progress || { matched: 0, scanned: 0, done: false };
+  const status = p.aborted
+    ? 'cancelled'
+    : p.capped
+      ? 'first 5000 results'
+      : p.done
+        ? 'done'
+        : 'searching…';
+  banner.innerHTML = `
+    <span class="search-banner__icon">${iconHTML('search', 13)}</span>
+    <span class="search-banner__text">
+      <strong>${escapeHtml(state.search.query)}</strong>
+      <small>in ${escapeHtml(state.search.root)}</small>
+    </span>
+    <span class="search-banner__count">${p.matched} match${p.matched === 1 ? '' : 'es'} · ${status}</span>
+    <button class="search-banner__btn" data-act="cancel" ${p.done ? 'disabled' : ''}>Cancel</button>
+    <button class="search-banner__btn" data-act="clear">Clear</button>
+  `;
+  banner.querySelector('[data-act="cancel"]').addEventListener('click', (e) => {
+    e.stopPropagation();
+    onCancel?.();
+  });
+  banner.querySelector('[data-act="clear"]').addEventListener('click', (e) => {
+    e.stopPropagation();
+    onClear?.();
+  });
+  return banner;
+}
+
 export function selectionSizeLabel(pane) {
   if (!pane.selected.size) return '';
   let bytes = 0;
@@ -385,6 +438,11 @@ export function selectionSizeLabel(pane) {
 }
 
 export function filtered(state) {
+  // Recursive-search mode short-circuits the normal entries list.
+  // Results stream in from search.js; we render whatever has arrived.
+  if (state.search && state.search.results) {
+    return state.search.results;
+  }
   const sorted = sortedEntries(state);
   if (!state.filter) return sorted;
   const q = state.filter.toLowerCase();

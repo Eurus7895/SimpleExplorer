@@ -4,7 +4,7 @@
 // Visuals trace explorer-fluent.jsx in the design bundle.
 
 import { iconHTML } from '../icons.js';
-import { renderRows, renderColumnHeader, renderBreadcrumb, getRecent, selectionSizeLabel } from '../pane.js';
+import { renderRows, renderColumnHeader, renderBreadcrumb, getRecent, selectionSizeLabel, renderSearchBanner } from '../pane.js';
 import { SIDEBAR_FULL } from '../sidebar-data.js';
 import { applyLayout } from '../layout.js';
 import { openPalette, isPaletteOpen } from '../palette.js';
@@ -164,6 +164,12 @@ function paneCard(ctx, pane, i) {
     });
     card.appendChild(head);
   }
+
+  const banner = renderSearchBanner(pane, {
+    onCancel: () => ctx.onCancelSearch(i),
+    onClear: () => ctx.onClearSearch(i),
+  });
+  if (banner) card.appendChild(banner);
 
   const rows = renderRows(pane, {
     paneIdx: i,
