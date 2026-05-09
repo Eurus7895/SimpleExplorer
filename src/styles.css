@@ -265,6 +265,45 @@ kbd {
 .a-sidebar__item small { font-size: 10px; color: var(--text-dim); }
 .a-sidebar__item .icn { color: var(--text-mute); }
 
+/* Sidebar mode tabs (Phase 7f) — switches the sidebar body between
+   the curated quick-access list and the folder tree. */
+.a-sidebar__tabs {
+  display: flex; gap: 2px; padding: 6px 8px 4px;
+  border-bottom: 1px solid var(--border-soft); margin-bottom: 6px;
+}
+.a-sidebar__tab {
+  flex: 1; height: 24px; padding: 0 8px;
+  background: transparent; border: 1px solid transparent; border-radius: 5px;
+  color: var(--text-mute); font-size: 11.5px; cursor: pointer;
+}
+.a-sidebar__tab:hover { background: var(--hover); }
+.a-sidebar__tab--on {
+  background: var(--accent-bg); color: var(--accent); font-weight: 600;
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.a-sidebar__tree { padding: 4px 0; }
+.tree__node { }
+.tree__row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 8px; cursor: pointer; color: var(--text);
+  border-radius: 4px; margin: 0 4px;
+}
+.tree__row:hover { background: var(--hover); }
+.tree__row--active { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+.tree__chev {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 12px; color: var(--text-dim); font-size: 13px;
+  transition: transform 80ms ease;
+}
+.tree__chev--open { transform: rotate(90deg); }
+.tree__ico { display: inline-flex; align-items: center; color: var(--text-mute); }
+.tree__label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.tree__loading, .tree__empty {
+  font-size: 11px; color: var(--text-dim); padding: 2px 0;
+  font-style: italic;
+}
+
 .a-grid {
   flex: 1; display: grid; padding: 6px;
   background: var(--bg); min-height: 0;

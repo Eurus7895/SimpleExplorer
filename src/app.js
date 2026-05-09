@@ -60,6 +60,7 @@ const DEFAULT = {
   splits: { ...DEFAULT_SPLITS },
   cmdRailOpen: 'recent',
   previewOpen: false,
+  sidebarMode: 'quick',
 };
 
 const RENDERERS = {
@@ -218,6 +219,8 @@ function render() {
     previewOpen: !!settings.previewOpen,
     onPreviewToggle: () => { settings.previewOpen = !settings.previewOpen; saveSettings(); render(); },
     pushPreview: (paneIdx) => pushPreviewForPane(paneIdx),
+    sidebarMode: settings.sidebarMode || 'quick',
+    onSidebarModeChange: (m) => { settings.sidebarMode = m; saveSettings(); render(); },
     onRename: async (i, oldName, newName) => {
       const p = panes[i];
       p.renaming = null;

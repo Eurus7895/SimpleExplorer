@@ -9,6 +9,7 @@ import { SIDEBAR_FULL } from '../sidebar-data.js';
 import { applyLayout } from '../layout.js';
 import { openPalette, isPaletteOpen } from '../palette.js';
 import { ensurePreviewPanel, bindPreviewClose, showPreviewFor } from '../preview.js';
+import { renderTree } from '../tree.js';
 
 const LAYOUT_OPTS = [
   { id: '1',  icn: 'one',       title: 'Single' },
@@ -111,6 +112,31 @@ function commandBar(ctx) {
 
 function sidebar(ctx) {
   const side = el('div', 'a-sidebar');
+  // Mode tabs at the top: Quick access (existing) / Tree (Phase 7f).
+  const tabBar = el('div', 'a-sidebar__tabs');
+  const mode = ctx.sidebarMode || 'quick';
+  ['quick', 'tree'].forEach((m) => {
+    const b = el('button', 'a-sidebar__tab' + (mode === m ? ' a-sidebar__tab--on' : ''));
+    b.textContent = m === 'quick' ? 'Quick access' : 'Tree';
+    b.addEventListener('click', () => ctx.onSidebarModeChange(m));
+    tabBar.appendChild(b);
+  });
+  side.appendChild(tabBar);
+
+  if (mode === 'tree') {
+    const treeWrap = el('div', 'a-sidebar__tree');
+    const roots = (ctx.drives.length
+      ? ctx.drives.map((d) => ({ label: d.name, path: d.path }))
+      : [{ label: 'Home', path: ctx.home }]);
+    renderTree(treeWrap, {
+      roots,
+      activePath: ctx.panes[ctx.activePane]?.path,
+      onNavigate: (p) => ctx.onPaneNav(ctx.activePane, p),
+    });
+    side.appendChild(treeWrap);
+    return side;
+  }
+
   SIDEBAR_FULL.forEach((sec) => {
     const block = el('div', 'a-sidebar__block');
     const title = el('div', 'a-sidebar__title');
