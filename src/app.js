@@ -520,6 +520,15 @@ async function doAction(action) {
   }
 }
 
+// True when the integrated terminal owns keyboard focus. Drives the
+// "explorer vs terminal" zone gate in bindGlobalKeys -- when this is
+// true, only Ctrl+` / Ctrl+K reach the explorer; everything else stays
+// in the terminal input.
+function isTerminalFocused() {
+  const a = document.activeElement;
+  return !!(a && a.closest && a.closest('.term'));
+}
+
 function bindGlobalKeys() {
   document.addEventListener('explorer:action', (e) => doAction(e.detail));
   document.addEventListener('explorer:select-change', (e) => {
@@ -530,13 +539,28 @@ function bindGlobalKeys() {
     const idx = e.detail?.paneIdx ?? activePane;
     pushPreviewForPane(idx);
   });
+  // Click anywhere outside the terminal panel returns keyboard focus to
+  // the explorer side, so explorer shortcuts (F2 / Del / type-to-jump /
+  // Backspace-up) start working again. Without this, focus would stay
+  // trapped in the terminal input after the user clicks a pane row.
+  document.addEventListener('mousedown', (e) => {
+    if (!isTerminalFocused()) return;
+    if (e.target instanceof Element && e.target.closest('.term')) return;
+    document.activeElement?.blur?.();
+  });
   document.addEventListener('keydown', (e) => {
-    // Both directions now anchor the palette to a visible input
-    // (`.palette-input`) embedded in their chrome. Ctrl+K focuses it;
-    // Ctrl+L focuses it pre-filled with the active pane's path. The
-    // standalone overlay path is kept as a fallback for environments
-    // where the input isn't in the DOM.
+    // Always-global shortcuts -- these work regardless of which zone
+    // currently owns focus, because they're how the user *switches*
+    // zones in the first place.
+    if ((e.ctrlKey || e.metaKey) && e.key === '`') {
+      // Ctrl+` toggles the integrated terminal in either direction.
+      e.preventDefault();
+      toggleTerminal();
+      render();
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+      // Palette is intentionally cross-zone -- works from terminal too.
       const input = document.querySelector('input.palette-input');
       if (input) {
         e.preventDefault();
@@ -548,18 +572,18 @@ function bindGlobalKeys() {
       }
       return;
     }
+
+    // Below this line: explorer-only. When terminal owns focus, none of
+    // these fire -- the keystrokes belong to the shell input. The user
+    // returns to explorer mode by clicking a pane (mousedown listener
+    // above blurs the terminal) or by toggling the terminal off.
+    if (isTerminalFocused()) return;
+
     if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'P')) {
       // Ctrl+P toggles the right-side preview pane.
       e.preventDefault();
       settings.previewOpen = !settings.previewOpen;
       saveSettings();
-      render();
-      return;
-    }
-    if ((e.ctrlKey || e.metaKey) && e.key === '`') {
-      // Ctrl+` toggles the integrated terminal in either direction.
-      e.preventDefault();
-      toggleTerminal();
       render();
       return;
     }

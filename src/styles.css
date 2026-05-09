@@ -475,7 +475,14 @@ kbd {
   border-top: 1px solid var(--border); background: var(--surface2);
   display: flex; flex-direction: column;
 }
-.term { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.term { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }
+/* Focus-zone cue: while the terminal input owns keystrokes, paint a
+   1px accent line along the panel's top edge so the user knows the
+   explorer shortcuts are paused. Click any pane to return focus. */
+.term--focused::before {
+  content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2px;
+  background: var(--accent); pointer-events: none;
+}
 .term__head {
   display: flex; align-items: center; gap: 6px;
   height: 28px; padding: 0 6px;

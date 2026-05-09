@@ -301,6 +301,11 @@ export function renderTerminal(container, { onClose, onNewTab, panePath }) {
   `;
   body.appendChild(inputRow);
   const input = inputRow.querySelector('[data-term-input]');
+  // Visual zone cue: while the input has focus, the panel gets an
+  // accent outline so the user can see at a glance which zone owns
+  // their keystrokes (matches the convention in bindGlobalKeys).
+  input.addEventListener('focus', () => panel.classList.add('term--focused'));
+  input.addEventListener('blur', () => panel.classList.remove('term--focused'));
   input.addEventListener('keydown', async (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
