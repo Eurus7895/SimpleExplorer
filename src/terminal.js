@@ -22,10 +22,14 @@ const TOGGLE_KEY = 'simple-explorer.terminal.open';
 const TERMS_KEY = 'simple-explorer.terminal.tabs';
 
 // Per-tab runtime state. Tabs are { id, shell, cwd, pid, lines, input }.
+// `focusOnRender` is a one-shot flag: renderTerminal honors it once and
+// clears it. Set when the user explicitly *opens* the panel or creates
+// a new terminal -- never on incidental re-renders.
 const state = {
   open: load(TOGGLE_KEY) === 'true',
   tabs: [],
   active: 0,
+  focusOnRender: false,
 };
 
 function load(k) { try { return localStorage.getItem(k); } catch { return null; } }
@@ -36,7 +40,14 @@ export function setTerminalOpen(open) {
   state.open = !!open;
   save(TOGGLE_KEY, state.open ? 'true' : 'false');
 }
-export function toggleTerminal() { setTerminalOpen(!state.open); return state.open; }
+export function toggleTerminal() {
+  const wasOpen = state.open;
+  setTerminalOpen(!state.open);
+  // Closed -> open is a deliberate "I want to type a command" gesture;
+  // grab focus on the next render. Open -> closed obviously doesn't.
+  if (!wasOpen && state.open) state.focusOnRender = true;
+  return state.open;
+}
 
 // Detect available shells on PATH, in VS Code's preference order.
 async function detectShell() {
@@ -95,6 +106,9 @@ export async function newTerminal(cwd) {
   }
   state.tabs.push(tab);
   state.active = state.tabs.length - 1;
+  // Creating a new tab is an explicit "I'm going to type here" action,
+  // so honor focus on the upcoming render.
+  state.focusOnRender = true;
   return tab;
 }
 
@@ -366,7 +380,15 @@ export function renderTerminal(container, { onClose, onNewTab, panePath }) {
       return;
     }
   });
-  setTimeout(() => input.focus(), 0);
+  // Auto-focus is opt-in via the `focusOnRender` flag set when the
+  // terminal panel was just opened or a new tab was just created.
+  // Re-rendering with the panel already open (e.g. after pane
+  // navigation triggers app render) must NOT snatch focus back from
+  // whatever the user is doing in the explorer.
+  if (state.focusOnRender) {
+    state.focusOnRender = false;
+    setTimeout(() => input.focus(), 0);
+  }
 
   // Local rerender redraws just this terminal panel.
   function rerender() {
