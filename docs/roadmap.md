@@ -11,8 +11,10 @@ have shipped. The Workspace direction has been removed; the
 remaining directions are Fluent (A) and Cmd (B). Remaining
 work: the **Phase 8 polish + scaling pass** (big-dir listing
 perf, tree virtualization, real PTY-backed terminal, copy/move
-progress + conflict UI, selection keyboard ergonomics) and the
-items in [Open questions / debt](#open-questions--debt).
+progress + conflict UI, selection keyboard ergonomics, and
+in-app dialogs to replace the native `prompt()` / `confirm()`
+that breaks the Mica chrome) and the items in
+[Open questions / debt](#open-questions--debt).
 
 ## Shipped
 
@@ -680,11 +682,12 @@ skin keeps "Open in Terminal" as an external spawn.
 ### Phase 8 — Polish, scaling, real terminal (sequenced)
 
 Where Phase 7 was a feature-breadth push, Phase 8 is the cleanup
-and scaling pass. Four sub-phases, total ~9 days. Ordered by user
-impact: 8a fixes the only place the app feels visibly slow,
+and scaling pass. Five sub-phases, total ~10.5 days. Ordered by
+user impact: 8a fixes the only place the app feels visibly slow,
 8b unlocks the deferred terminal upgrade, 8c stops silent
-data-overwrite footguns, 8d closes the keyboard-ergonomics gap
-that real-Windows usage exposed.
+data-overwrite footguns, 8d closes the keyboard-ergonomics gap,
+8e replaces the WebView2-native `prompt()` / `confirm()` dialogs
+that break the Mica chrome whenever the user clicks New / Delete.
 
 | Sub-phase | Theme | Size | Helper? | Risk |
 | --- | --- | --- | --- | --- |
@@ -692,6 +695,7 @@ that real-Windows usage exposed.
 | 8b | Helper rebuild + ConPTY + xterm.js | 4d | **yes** (new `pty` verb) | high |
 | 8c | Copy/move polish: progress, conflict, cancel | 2d | no | med |
 | 8d | Selection keyboard ergonomics | 1d | no | low |
+| 8e | In-app dialogs for command-bar buttons | 1.5d | no | low |
 
 #### 8a — Listing perf + tree virtualization (~2 days)
 
@@ -791,6 +795,54 @@ Closes the gap with stock Explorer.
   when the terminal does.
 - Out of scope: rubber-band select (drag-to-select rectangle) —
   bigger UX change, separate phase.
+
+#### 8e — In-app dialogs for command-bar buttons (~1.5 days)
+
+The command bar's New / Copy / Rename / Delete / Compare /
+"Drag out…" actions currently route through `prompt()` and
+`confirm()` -- the WebView2 native dialogs. They show as
+`127.0.0.1:58681 says…` chrome that breaks the Mica frameless
+look completely (see Phase 7a's design intent), can't be themed,
+and lock the entire app while open. Replace with in-app modals
+that match the chrome.
+
+- **`src/modal.js` (new):** small overlay primitive --
+  `prompt({ title, label, value, validate })`,
+  `confirm({ title, body, danger })`, and `choose({ title, body,
+  options })` for multi-button cases. Returns Promises so callers
+  stay async-await-shaped. Single-instance (re-opening tears down
+  the previous overlay), Esc cancels, Enter submits, click-outside
+  cancels (or doesn't, when `danger: true`).
+- **Wire each command-bar action through it.** `app.js` doAction
+  cases swap their `prompt()` / `confirm()` for the new
+  primitive. The `New folder` action gets validation against
+  invalid Win32 chars (`<>:"/\\|?*`), already-exists collision
+  check, and a default-suggested name (`New folder`,
+  `New folder (2)`, …) that's pre-selected so Enter accepts.
+- **Trash confirm copy.** Today's `Move N item(s) to Recycle
+  Bin?` becomes a styled modal with the items listed (capped at 5
+  + "and N more"), a Recycle Bin icon, and a destructive accent
+  on the OK button. Same shape for Permanently delete (Shift+Del).
+- **Rename inline already exists** (Phase 6a's F2 inline editor)
+  -- this phase doesn't change row-level rename. The command-bar
+  Rename button still walks through the modal because the user
+  may have multi-select; for single selection it could fall
+  through to the inline editor (decide during implementation).
+- **Style:** matches `.popover` / `.search-banner` -- 1 px
+  border, 6 px radius, soft drop shadow, body in `var(--surface)`.
+  Header has the title; body has the prompt + input; footer has
+  Cancel + primary button right-aligned. Min width 360 px.
+- **Visual button polish (drive-by).** While we're touching the
+  cmd-bar buttons, the `.cmdbtn` style is currently flat-text;
+  give it the same hover treatment as `.iconbtn`, swap the
+  emoji-ish glyphs in `Copy` / `Rename` for properly-aligned
+  iconHTML calls (most already use icons but `Compare` and
+  `Delete` slightly drift). Same height (28 px), same accent on
+  hover.
+- Out of scope: a full settings / preferences pane (separate
+  phase 9 candidate); toast notifications for action results
+  (success / failure feedback) -- just keep the existing console
+  warns for v1.
 
 ## Open questions / debt
 
