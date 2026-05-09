@@ -179,11 +179,21 @@ function psQuote(s) {
 // PowerShell paths so the app keeps working.
 const HELPER_PATH = 'extras\\shellhelp.exe';
 let helperReady = null;
-async function helperAvailable() {
+export async function helperAvailable() {
   if (!N) return false;
-  if (helperReady !== null) return helperReady;
-  helperReady = N.filesystem.getStats(HELPER_PATH).then(() => true).catch(() => false);
-  return helperReady;
+  // Cache only success: once the helper is found, subsequent calls
+  // return immediately without a getStats round-trip. A missing
+  // helper is *not* cached so that building the binary mid-session
+  // (then clicking "Start a new terminal" again) picks it up
+  // without requiring an app restart.
+  if (helperReady === true) return true;
+  try {
+    await N.filesystem.getStats(HELPER_PATH);
+    helperReady = true;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function runHelper(...args) {

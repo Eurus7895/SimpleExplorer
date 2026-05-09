@@ -79,6 +79,9 @@ install time, we ship a small MSVC-built binary at `extras/shellhelp.exe`:
 | `drives` | `GetLogicalDriveStringsW` + `GetDiskFreeSpaceExW` → JSON | PowerShell + `Get-PSDrive` |
 | `menu <path…>` | `IShellFolder::GetUIObjectOf` → `IContextMenu::QueryContextMenu` → JSON tree | curated static JS list |
 | `invoke <id> <path…>` | `IContextMenu::InvokeCommand` with the chosen verb id | (no equivalent before) |
+| `thumb <size> <path>` | `IShellItemImageFactory::GetImage` → WIC PNG → `%TEMP%` path printed to stdout | kind icons only |
+| `dragout <path…>` | `BHID_DataObject` → `DoDragDrop`; `DROPEFFECT` printed to stdout | (no equivalent before) |
+| `pty <shell> [<cwd>]` | `CreatePseudoConsole` + two-thread byte pump between helper stdin/stdout and the PTY | line-oriented `spawnProcess` (Phase 7g v1) |
 
 The curated SimpleExplorer items (Open in active pane, Copy path, Rename,
 Delete, Show in Explorer, Properties) still live in `src/pane.js` and
@@ -108,6 +111,36 @@ Latency budget after the change:
 
 Open / Open in VS Code / Open in Terminal / Show in Explorer / Copy path /
 Rename are already direct spawns or pure JS — no helper needed.
+
+### Integrated terminal (Phase 8b)
+
+`src/terminal.js` mounts an [xterm.js](https://xtermjs.org/) Terminal into
+a bottom panel and pipes bytes to `extras/shellhelp.exe pty <shell>`,
+which spawns the chosen shell under a Windows ConPTY. This replaces the
+Phase 7g line-oriented `<pre>` + input stub that couldn't host vim, less,
+top, ssh password prompts, or shell tab-completion.
+
+xterm.js is vendored offline at `src/vendor/xterm/` (core 5.5.0 +
+addon-fit 0.10.0 + addon-web-links 0.11.0). Bundle is loaded as plain
+`<script>` tags from `src/index.html`; UMD wrappers attach `Terminal`,
+`FitAddon.FitAddon`, and `WebLinksAddon.WebLinksAddon` to `globalThis`.
+No bundler step.
+
+Resize is plumbed as an out-of-band control sequence on stdin:
+`ESC ] SE_CTL ; resize ; <cols> ; <rows> BEL`. The helper's stdin pump
+intercepts the OSC-framed prefix and calls `ResizePseudoConsole`;
+everything else passes through to the PTY input pipe untouched. The
+sentinel `ESC ] SE_CTL ;` won't be produced by user keystrokes, so
+collision risk is effectively zero. xterm.js triggers a resize via
+`ResizeObserver` on the panel element, coalesced through `requestAnimationFrame`
+so splitter drags don't flood the helper.
+
+Helper missing? The panel renders a one-paragraph "build the helper or
+download the CI artifact" message and stays out of the way. We
+deliberately do *not* fall back to the v1 line-oriented stub — that was
+the trap Phase 7g shipped (broken vim, broken password prompts, broken
+tab completion); inheriting it as a fallback would just move the trap
+behind a flag.
 
 ## Design source of truth (visual)
 

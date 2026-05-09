@@ -19,6 +19,7 @@
 //   shellhelp invoke <id> <path> [<path>...] — invoke menu command id
 //   shellhelp thumb <size> <path>           — write PNG thumb to %TEMP%; print path
 //   shellhelp dragout <path> [<path> ...]   — start CF_HDROP DoDragDrop; print effect
+//   shellhelp pty <shell> [<cwd>]           — spawn shell under ConPTY, pump bytes
 
 #include <windows.h>
 #include <shlobj.h>
@@ -26,6 +27,7 @@
 #include <objbase.h>
 #include <wincodec.h>
 #include <oleidl.h>
+#include <process.h>
 #include <stdio.h>
 #include <wchar.h>
 #include <string.h>
@@ -483,9 +485,297 @@ static int verb_dragout(int argc, wchar_t** argv) {
     return SUCCEEDED(hr) ? 0 : 1;
 }
 
+// ── ConPTY pty verb ─────────────────────────────────────────────────────────
+//
+// Spawns the requested shell under a Windows ConPTY (Win10 1809+) and
+// pumps bytes between the helper's own stdin/stdout and the PTY:
+//
+//   helper.stdin  ──▶  PTY input  ──▶  shell reads keystrokes
+//   shell writes  ──▶  PTY output ──▶  helper.stdout
+//
+// JS (src/terminal.js) spawns this helper via Neutralino.os.spawnProcess;
+// xterm.js's onData/write handlers wire its bytes to the helper's pipes.
+//
+// Resize: JS injects an out-of-band control sequence on stdin —
+//   ESC ] SE_CTL ; resize ; <cols> ; <rows> BEL
+// The helper's stdin pump scans for that prefix, intercepts the message,
+// and calls ResizePseudoConsole. The OSC-style framing (ESC ]…BEL) is
+// well-defined in xterm protocols and won't be produced by user
+// keystrokes, so there's no realistic collision risk with PTY input.
+//
+// Return codes:
+//   0    — child process exited normally; child's exit code is on stdout
+//          as a literal final line "\nshellhelp.pty.exit=<code>\n"
+//   3    — ConPTY APIs not present (Windows < 1809)
+//   1    — generic failure (pipe / spawn / GetProcAddress mismatch)
+
+#define PTY_CTL_PREFIX   "\x1b]SE_CTL;"
+#define PTY_CTL_PREFIX_N 9
+#define PTY_CTL_TERM     '\x07'
+
+// Resolved at runtime so we can produce a clean error on Windows < 1809
+// instead of failing to load the binary altogether.
+typedef HRESULT (WINAPI *PFN_CreatePseudoConsole)(COORD, HANDLE, HANDLE, DWORD, HPCON*);
+typedef HRESULT (WINAPI *PFN_ResizePseudoConsole)(HPCON, COORD);
+typedef void    (WINAPI *PFN_ClosePseudoConsole)(HPCON);
+
+struct PtyCtx {
+    HANDLE inputWrite;   // we write to here; PTY reads from inputRead
+    HANDLE outputRead;   // PTY writes to outputWrite; we read from here
+    HPCON  hpc;
+    PFN_ResizePseudoConsole pResize;
+    volatile LONG running;
+};
+
+// Thread: read PTY output → write to our stdout. xterm.js renders bytes
+// directly. Newlines / colors / cursor moves are all PTY-emitted ANSI.
+static unsigned __stdcall pump_out(void* arg) {
+    PtyCtx* c = (PtyCtx*)arg;
+    HANDLE outOurs = GetStdHandle(STD_OUTPUT_HANDLE);
+    char buf[4096];
+    DWORD n = 0;
+    while (InterlockedCompareExchange(&c->running, 0, 0)) {
+        if (!ReadFile(c->outputRead, buf, sizeof(buf), &n, NULL) || n == 0) break;
+        DWORD written = 0;
+        const char* p = buf;
+        DWORD remaining = n;
+        while (remaining > 0) {
+            if (!WriteFile(outOurs, p, remaining, &written, NULL) || written == 0) {
+                return 0;
+            }
+            p += written;
+            remaining -= written;
+        }
+    }
+    return 0;
+}
+
+// Apply a parsed control payload like "resize;80;24". Unknown commands
+// are silently ignored — additive protocol, future-friendly.
+static void apply_control(PtyCtx* c, const char* payload, size_t n) {
+    // Need writable copy for strtok-style scan.
+    if (n == 0 || n > 256) return;
+    char buf[260];
+    memcpy(buf, payload, n);
+    buf[n] = 0;
+
+    if (strncmp(buf, "resize;", 7) == 0) {
+        const char* p = buf + 7;
+        int cols = atoi(p);
+        const char* sc = strchr(p, ';');
+        int rows = sc ? atoi(sc + 1) : 0;
+        if (cols > 0 && rows > 0 && c->pResize && c->hpc) {
+            COORD sz = { (SHORT)cols, (SHORT)rows };
+            c->pResize(c->hpc, sz);
+        }
+    }
+}
+
+// Thread: read our stdin → write to PTY input, intercepting OSC-framed
+// control messages. The state machine has three states:
+//   0 — passthrough; on ESC, switch to 1 and stash it
+//   1 — saw ESC; on ']', match prefix; otherwise flush ESC + this byte
+//   2 — capturing payload until BEL; on BEL, dispatch and return to 0
+static unsigned __stdcall pump_in(void* arg) {
+    PtyCtx* c = (PtyCtx*)arg;
+    HANDLE inOurs = GetStdHandle(STD_INPUT_HANDLE);
+    char buf[4096];
+    DWORD n = 0;
+
+    int state = 0;             // 0 normal, 1 saw-ESC, 2 capturing payload
+    size_t prefixMatched = 0;  // bytes of PTY_CTL_PREFIX matched after ESC
+    char payload[512];
+    size_t payloadLen = 0;
+
+    while (InterlockedCompareExchange(&c->running, 0, 0)) {
+        if (!ReadFile(inOurs, buf, sizeof(buf), &n, NULL) || n == 0) break;
+        // Output buffer for PTY-bound bytes; flushed in chunks.
+        char out[4096];
+        size_t outLen = 0;
+        for (DWORD i = 0; i < n; ++i) {
+            char b = buf[i];
+            if (state == 0) {
+                if (b == '\x1b') { state = 1; prefixMatched = 1; }
+                else { out[outLen++] = b; }
+            } else if (state == 1) {
+                // PTY_CTL_PREFIX[0] is ESC, already matched. Compare next.
+                if (prefixMatched < PTY_CTL_PREFIX_N &&
+                    b == PTY_CTL_PREFIX[prefixMatched]) {
+                    prefixMatched++;
+                    if (prefixMatched == PTY_CTL_PREFIX_N) {
+                        state = 2;
+                        payloadLen = 0;
+                    }
+                } else {
+                    // Not a control sequence; flush what we held back and
+                    // re-process this byte in state 0.
+                    for (size_t k = 0; k < prefixMatched; ++k) {
+                        out[outLen++] = PTY_CTL_PREFIX[k];
+                    }
+                    state = 0;
+                    prefixMatched = 0;
+                    --i;  // re-examine current byte
+                }
+            } else {  // state == 2
+                if (b == PTY_CTL_TERM) {
+                    apply_control(c, payload, payloadLen);
+                    state = 0;
+                    prefixMatched = 0;
+                    payloadLen = 0;
+                } else if (payloadLen < sizeof(payload) - 1) {
+                    payload[payloadLen++] = b;
+                } else {
+                    // Overflow — abandon capture, drop payload.
+                    state = 0;
+                    prefixMatched = 0;
+                    payloadLen = 0;
+                }
+            }
+        }
+        if (outLen > 0) {
+            DWORD written = 0;
+            const char* p = out;
+            size_t remaining = outLen;
+            while (remaining > 0) {
+                if (!WriteFile(c->inputWrite, p, (DWORD)remaining, &written, NULL) ||
+                    written == 0) {
+                    return 0;
+                }
+                p += written;
+                remaining -= written;
+            }
+        }
+    }
+    return 0;
+}
+
+static int verb_pty(int argc, wchar_t** argv) {
+    if (argc < 3) {
+        fwprintf(stderr, L"shellhelp: pty needs <shell> [<cwd>]\n");
+        return 2;
+    }
+    const wchar_t* shell = argv[2];
+    const wchar_t* cwd = (argc >= 4) ? argv[3] : NULL;
+
+    // ConPTY symbols live in kernel32 since Win10 1809. Resolve at runtime
+    // so this binary still loads on older Windows; JS falls back to v1.
+    HMODULE hk32 = GetModuleHandleW(L"kernel32.dll");
+    PFN_CreatePseudoConsole pCreate = (PFN_CreatePseudoConsole)
+        GetProcAddress(hk32, "CreatePseudoConsole");
+    PFN_ResizePseudoConsole pResize = (PFN_ResizePseudoConsole)
+        GetProcAddress(hk32, "ResizePseudoConsole");
+    PFN_ClosePseudoConsole pClose = (PFN_ClosePseudoConsole)
+        GetProcAddress(hk32, "ClosePseudoConsole");
+    if (!pCreate || !pResize || !pClose) {
+        fwprintf(stderr, L"shellhelp: ConPTY unavailable (need Windows 10 1809+)\n");
+        return 3;
+    }
+
+    // Two anonymous pipes:
+    //   inputRead  ◀── inputWrite  (we write keystrokes; PTY reads them)
+    //   outputRead ◀── outputWrite (PTY writes screen; we read it)
+    HANDLE inputRead = NULL, inputWrite = NULL;
+    HANDLE outputRead = NULL, outputWrite = NULL;
+    SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
+    if (!CreatePipe(&inputRead, &inputWrite, NULL, 0) ||
+        !CreatePipe(&outputRead, &outputWrite, NULL, 0)) {
+        fwprintf(stderr, L"shellhelp: CreatePipe failed (%lu)\n", GetLastError());
+        return 1;
+    }
+
+    // Start at a sane default; JS will resize-message us almost
+    // immediately with the real grid dimensions.
+    COORD size = { 80, 24 };
+    HPCON hpc = NULL;
+    HRESULT hr = pCreate(size, inputRead, outputWrite, 0, &hpc);
+    if (FAILED(hr)) {
+        fwprintf(stderr, L"shellhelp: CreatePseudoConsole failed (0x%08lx)\n",
+                 (unsigned long)hr);
+        return 1;
+    }
+    // The PTY now owns the slave-side handles.
+    CloseHandle(inputRead);
+    CloseHandle(outputWrite);
+
+    // Set up STARTUPINFOEX with the PTY attribute, then CreateProcess.
+    SIZE_T attrSize = 0;
+    InitializeProcThreadAttributeList(NULL, 1, 0, &attrSize);
+    PPROC_THREAD_ATTRIBUTE_LIST attrList =
+        (PPROC_THREAD_ATTRIBUTE_LIST)HeapAlloc(GetProcessHeap(), 0, attrSize);
+    if (!attrList) {
+        pClose(hpc);
+        return 1;
+    }
+    if (!InitializeProcThreadAttributeList(attrList, 1, 0, &attrSize) ||
+        !UpdateProcThreadAttribute(attrList, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+                                   hpc, sizeof(hpc), NULL, NULL)) {
+        HeapFree(GetProcessHeap(), 0, attrList);
+        pClose(hpc);
+        return 1;
+    }
+
+    STARTUPINFOEXW si = {};
+    si.StartupInfo.cb = sizeof(si);
+    si.lpAttributeList = attrList;
+
+    // CreateProcessW needs a writable command-line buffer.
+    wchar_t cmdline[1024];
+    swprintf_s(cmdline, _countof(cmdline), L"%ls", shell);
+
+    PROCESS_INFORMATION pi = {};
+    BOOL ok = CreateProcessW(
+        NULL, cmdline, NULL, NULL, FALSE,
+        EXTENDED_STARTUPINFO_PRESENT,
+        NULL, cwd, &si.StartupInfo, &pi);
+    DeleteProcThreadAttributeList(attrList);
+    HeapFree(GetProcessHeap(), 0, attrList);
+    if (!ok) {
+        fwprintf(stderr, L"shellhelp: CreateProcess(%ls) failed (%lu)\n",
+                 shell, GetLastError());
+        pClose(hpc);
+        return 1;
+    }
+
+    PtyCtx ctx = {};
+    ctx.inputWrite = inputWrite;
+    ctx.outputRead = outputRead;
+    ctx.hpc = hpc;
+    ctx.pResize = pResize;
+    InterlockedExchange(&ctx.running, 1);
+
+    HANDLE thOut = (HANDLE)_beginthreadex(NULL, 0, pump_out, &ctx, 0, NULL);
+    HANDLE thIn  = (HANDLE)_beginthreadex(NULL, 0, pump_in,  &ctx, 0, NULL);
+
+    // Wait for the shell to exit, then tear down. The output pump will
+    // drain on EOF; the input pump may still be blocked on ReadFile and
+    // is detached — process exit cleans it up.
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD exitCode = 0;
+    GetExitCodeProcess(pi.hProcess, &exitCode);
+
+    InterlockedExchange(&ctx.running, 0);
+    pClose(hpc);  // signals EOF on outputRead → output pump returns
+
+    // Give the output pump a brief window to flush trailing bytes; if
+    // it's stuck the parent process exit will reap it anyway.
+    WaitForSingleObject(thOut, 250);
+
+    CloseHandle(thOut);
+    CloseHandle(thIn);
+    CloseHandle(inputWrite);
+    CloseHandle(outputRead);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
+    // Sentinel JS scans for to detect normal exit + capture child's code.
+    printf("\nshellhelp.pty.exit=%lu\n", (unsigned long)exitCode);
+    fflush(stdout);
+    return 0;
+}
+
 int wmain(int argc, wchar_t** argv) {
     if (argc < 2) {
-        fwprintf(stderr, L"shellhelp: needs verb (properties|trash|drives|menu|invoke|thumb|dragout)\n");
+        fwprintf(stderr, L"shellhelp: needs verb (properties|trash|drives|menu|invoke|thumb|dragout|pty)\n");
         return 2;
     }
     if (wcscmp(argv[1], L"properties") == 0) return verb_properties(argc, argv);
@@ -495,6 +785,7 @@ int wmain(int argc, wchar_t** argv) {
     if (wcscmp(argv[1], L"invoke") == 0)     return verb_invoke(argc, argv);
     if (wcscmp(argv[1], L"thumb") == 0)      return verb_thumb(argc, argv);
     if (wcscmp(argv[1], L"dragout") == 0)    return verb_dragout(argc, argv);
+    if (wcscmp(argv[1], L"pty") == 0)        return verb_pty(argc, argv);
     fwprintf(stderr, L"shellhelp: unknown verb %ls\n", argv[1]);
     return 2;
 }
