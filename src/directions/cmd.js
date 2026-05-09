@@ -226,6 +226,13 @@ function escapeHtml(s) {
 function paneCard(ctx, pane, i) {
   const card = el('div', 'b-pane' + (i === ctx.activePane ? ' b-pane--active' : ''));
   card.dataset.paneIdx = i;
+  // Programmatic focus target so explorer keystrokes go here instead
+  // of staying in the terminal input. See fluent.js paneCard for the
+  // full rationale.
+  card.tabIndex = -1;
+  card.addEventListener('mousedown', () => {
+    card.focus({ preventScroll: true });
+  });
   card.addEventListener('click', () => ctx.setActivePane(i));
 
   const head = el('div', 'b-pane__head');

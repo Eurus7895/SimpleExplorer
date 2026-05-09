@@ -198,6 +198,16 @@ function sidebar(ctx) {
 function paneCard(ctx, pane, i) {
   const card = el('div', 'a-pane' + (i === ctx.activePane ? ' a-pane--active' : ''));
   card.dataset.paneIdx = i;
+  // Programmatic focus target. tabindex -1 keeps the card out of the
+  // Tab order but lets us call card.focus() on click so keyboard goes
+  // here rather than back to the terminal input.
+  card.tabIndex = -1;
+  card.addEventListener('mousedown', () => {
+    // Take focus on mousedown (before click) so the terminal blur
+    // happens before any selection logic runs. preventScroll stops
+    // the WebView from jump-scrolling on focus change.
+    card.focus({ preventScroll: true });
+  });
   card.addEventListener('click', () => ctx.setActivePane(i));
 
   card.appendChild(tabBar(ctx, pane, i));

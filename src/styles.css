@@ -319,6 +319,10 @@ kbd {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
 }
+/* Suppress the default focus ring on pane cards -- we already paint
+   our own active-pane border above, and tabindex=-1 cards take focus
+   programmatically only. */
+.a-pane:focus, .b-pane:focus { outline: none; }
 .a-tabs {
   display: flex; align-items: center;
   background: var(--surface2); border-bottom: 1px solid var(--border-soft); height: 30px;

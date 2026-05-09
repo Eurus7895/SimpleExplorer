@@ -144,11 +144,21 @@ async function safeLoad(state) {
 function applyActivePane(i) {
   if (i < 0 || i >= panes.length) return;
   activePane = i;
+  let activeCard = null;
   document.querySelectorAll('[data-pane-idx]').forEach((card) => {
     const isActive = Number(card.dataset.paneIdx) === i;
     if (card.classList.contains('a-pane')) card.classList.toggle('a-pane--active', isActive);
     if (card.classList.contains('b-pane')) card.classList.toggle('b-pane--active', isActive);
+    if (isActive) activeCard = card;
   });
+  // If the terminal currently owns focus, hand it to the active pane
+  // card so explorer keys (F2 / Del / type-to-jump) start working.
+  // Skip when a rename input is mid-edit -- we don't want to abort it.
+  const ae = document.activeElement;
+  const isRename = ae && ae.classList && ae.classList.contains('row__rename');
+  if (activeCard && !isRename && (isTerminalFocused() || ae === document.body || ae === null)) {
+    activeCard.focus?.({ preventScroll: true });
+  }
   const oldBar = document.querySelector('.a-statusbar');
   if (oldBar) oldBar.replaceWith(fluentStatusBar({ panes, activePane }));
 }
