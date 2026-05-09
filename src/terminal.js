@@ -147,10 +147,22 @@ export async function newTerminal(cwd) {
     });
 
     // PTY input: forward every keystroke / paste chunk to the helper.
+    // Logs land in DevTools console (Ctrl+Shift+I in the Neutralino
+    // window) so the chain xterm → JS → helper can be diagnosed when
+    // a key seems to "go nowhere".
     tab.term.onData((d) => {
+      console.debug('[term] onData', JSON.stringify(d), 'proc=', tab.proc?.id);
       if (!tab.proc) return;
-      try { N.os.updateSpawnedProcess(tab.proc.id, 'stdIn', d); } catch {}
+      try {
+        const r = N.os.updateSpawnedProcess(tab.proc.id, 'stdIn', d);
+        if (r && typeof r.then === 'function') {
+          r.catch((err) => console.warn('[term] stdIn failed:', err));
+        }
+      } catch (e) {
+        console.warn('[term] stdIn threw:', e);
+      }
     });
+    console.debug('[term] new helper proc id=', proc.id, 'shell=', shell, 'cwd=', tab.cwd);
   } catch (e) {
     tab.term.write(`[failed to spawn helper: ${e?.message || e}]\r\n`);
   }
@@ -283,18 +295,30 @@ export function renderTerminal(container, { onClose, onNewTab, panePath }) {
   // re-mounts; xterm preserves scrollback across .open() calls on the
   // same Terminal instance.
   active.term.open(mount);
-  if (active.fit) {
-    try { active.fit.fit(); } catch {}
-    sendResize(active);
-  }
 
-  // Click anywhere in the wrapper focuses the hidden xterm textarea.
-  // Without this, clicks on the wrapper's padding band fall outside
-  // xterm's own click handlers and the textarea never gets focus, so
-  // keystrokes go nowhere even though the panel looks ready to type.
-  mount.addEventListener('mousedown', () => {
+  // Defer fit + focus to the next frame so layout has settled. Calling
+  // fit() while mount.clientWidth/Height are still 0 produces a 0-col
+  // terminal that visibly renders the prompt (xterm draws what it has)
+  // but silently rejects input. Waiting one frame lets the flexbox /
+  // grid finalize the panel size first.
+  requestAnimationFrame(() => {
+    if (active.fit) {
+      try { active.fit.fit(); } catch {}
+      sendResize(active);
+    }
     try { active.term.focus(); } catch {}
+    console.debug('[term] post-fit focus; cols=', active.term.cols, 'rows=', active.term.rows);
   });
+
+  // Click anywhere in the wrapper or its descendants focuses the
+  // hidden xterm textarea. Bound to mount with capture: true so we
+  // run before any internal handlers that might consume the event,
+  // and on the .terminal element xterm renders inside mount so even
+  // padding-band clicks work.
+  const focusXterm = () => {
+    try { active.term.focus(); } catch {}
+  };
+  mount.addEventListener('mousedown', focusXterm, true);
 
   // ResizeObserver: refit + re-send resize whenever the panel changes
   // size. rAF coalesces splitter-drag floods so the helper isn't spammed
@@ -310,10 +334,6 @@ export function renderTerminal(container, { onClose, onNewTab, panePath }) {
   });
   ro.observe(mount);
 
-  // Focus the terminal whenever it remounts, not only on the explicit
-  // `focusOnRender` open/new-tab gesture. Without this, switching tabs
-  // or having Fluent re-render leaves keystrokes flowing nowhere.
-  setTimeout(() => { try { active.term.focus(); } catch {} }, 0);
   state.focusOnRender = false;
 
   return () => { if (ro) ro.disconnect(); };
