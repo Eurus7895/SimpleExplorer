@@ -196,6 +196,20 @@ export function renderTerminal(container, { onClose, onNewTab, panePath }) {
   panel.className = 'term';
   container.appendChild(panel);
 
+  // Hoisted before the early-return paths so `rerender()` can safely
+  // call `ro?.disconnect()` even when those paths never reach the
+  // ResizeObserver setup below. Previously the TDZ on `const ro`
+  // turned every empty-state click into a silent ReferenceError;
+  // tabs were created in `state` but the panel never repainted, so
+  // switching directions was the only way to see them.
+  let raf = 0;
+  let ro = null;
+
+  function rerender() {
+    if (ro) ro.disconnect();
+    renderTerminal(container, { onClose, onNewTab, panePath });
+  }
+
   const head = document.createElement('div');
   head.className = 'term__head';
   head.innerHTML = `
@@ -274,11 +288,18 @@ export function renderTerminal(container, { onClose, onNewTab, panePath }) {
     sendResize(active);
   }
 
+  // Click anywhere in the wrapper focuses the hidden xterm textarea.
+  // Without this, clicks on the wrapper's padding band fall outside
+  // xterm's own click handlers and the textarea never gets focus, so
+  // keystrokes go nowhere even though the panel looks ready to type.
+  mount.addEventListener('mousedown', () => {
+    try { active.term.focus(); } catch {}
+  });
+
   // ResizeObserver: refit + re-send resize whenever the panel changes
   // size. rAF coalesces splitter-drag floods so the helper isn't spammed
   // with control messages on every pixel of motion.
-  let raf = 0;
-  const ro = new ResizeObserver(() => {
+  ro = new ResizeObserver(() => {
     if (raf) return;
     raf = requestAnimationFrame(() => {
       raf = 0;
@@ -289,14 +310,11 @@ export function renderTerminal(container, { onClose, onNewTab, panePath }) {
   });
   ro.observe(mount);
 
-  if (state.focusOnRender) {
-    state.focusOnRender = false;
-    setTimeout(() => { try { active.term.focus(); } catch {} }, 0);
-  }
+  // Focus the terminal whenever it remounts, not only on the explicit
+  // `focusOnRender` open/new-tab gesture. Without this, switching tabs
+  // or having Fluent re-render leaves keystrokes flowing nowhere.
+  setTimeout(() => { try { active.term.focus(); } catch {} }, 0);
+  state.focusOnRender = false;
 
-  function rerender() {
-    ro.disconnect();
-    renderTerminal(container, { onClose, onNewTab, panePath });
-  }
-  return () => { ro.disconnect(); };
+  return () => { if (ro) ro.disconnect(); };
 }
