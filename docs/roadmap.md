@@ -13,8 +13,10 @@ work: the **Phase 8 polish + scaling pass** (big-dir listing
 perf, tree virtualization, real PTY-backed terminal, copy/move
 progress + conflict UI, selection keyboard ergonomics, and
 in-app dialogs to replace the native `prompt()` / `confirm()`
-that breaks the Mica chrome) and the items in
-[Open questions / debt](#open-questions--debt).
+that breaks the Mica chrome), the **Phase 9 Crew (Copilot CLI)
+integration** (shell out to the `crew` binary so users can ask
+natural-language questions about the file they're looking at),
+and the items in [Open questions / debt](#open-questions--debt).
 
 ## Shipped
 
@@ -839,10 +841,139 @@ that match the chrome.
   iconHTML calls (most already use icons but `Compare` and
   `Delete` slightly drift). Same height (28 px), same accent on
   hover.
-- Out of scope: a full settings / preferences pane (separate
-  phase 9 candidate); toast notifications for action results
+- Out of scope: a full settings / preferences pane (parked for a
+  later polish pass); toast notifications for action results
   (success / failure feedback) -- just keep the existing console
   warns for v1.
+
+### Phase 9 — Crew (Copilot CLI) integration
+
+Wire the `crew` CLI from
+[Eurus7895/CopilotCrew](https://github.com/Eurus7895/CopilotCrew/tree/dev)
+into SimpleExplorer so a user can ask natural-language questions
+about the file(s) they're looking at without leaving the explorer.
+Crew is the terminal-native Copilot SDK assistant — `crew "what
+does this file do"` runs a routed LLM call; agents, pipelines, and
+skills are reachable via `--agent`, `--pipeline`, `/<skill>`. We
+shell out to the binary; we do **not** import its Python or vendor
+its SDK.
+
+Three sub-phases, total ~4 days. 9a is the spine; 9b makes it
+useful for the explorer-specific case; 9c is the polish that
+turns the surface into something users will reach for.
+
+| Sub-phase | Theme | Size | Helper? | Risk |
+| --- | --- | --- | --- | --- |
+| 9a | Spawn `crew` and stream output | 1.5d | no | low |
+| 9b | File-context injection + right-click action | 1.5d | no | low |
+| 9c | Skill / agent quick-pick + output drawer | 1d | no | med |
+
+**Out of scope across the whole phase:**
+- Bundling Crew or its Python runtime. We assume `crew` is on
+  the user's `PATH`; if not, the integration shows a one-shot
+  "Crew not found — install via `pipx install copilotcrew`"
+  notice and stays out of the way. No silent install attempts.
+- Crew's `gui` mode (it has its own desktop interface). We don't
+  embed or compete with that; we just expose the CLI.
+- Auth flow inside SimpleExplorer. Crew handles its own GitHub
+  Copilot login on first run — we surface stderr so the user
+  sees the device-code prompt and resolves it externally.
+- Pipeline editing / agent authoring. We *invoke* what's in
+  `~/.crew/`; we don't manage it.
+
+#### 9a — Spawn `crew` and stream output (~1.5 days)
+
+The minimum viable path: a "Crew" panel that can run `crew
+"<prompt>"` and show streaming stdout. Reuses Phase 7g's terminal
+infrastructure rather than rolling a new IPC layer.
+
+- **`src/crew.js` (new)** — wraps `Neutralino.os.spawnProcess`
+  around the `crew` binary. Exports `runCrew({ args, onChunk,
+  signal })` returning a Promise; chunks come from
+  `events.on('spawnedProcess', …)` in 16 ms-coalesced batches.
+  AbortSignal cancellation maps to `os.updateSpawnedProcess(…,
+  'exit')`.
+- **Detect availability.** On boot, `where crew` (or `which crew`
+  fallback). Cache the result; the rail icon shows disabled with
+  a tooltip "Install crew via pipx install copilotcrew" when
+  missing.
+- **Reuse the terminal panel chrome.** Crew runs as a special
+  tab type alongside the existing shell tabs — `tab.kind:
+  'crew' | 'shell'`. Crew tabs render with a different prompt
+  (`crew >`) and the input maps Enter to `runCrew(['"' + line +
+  '"'])` instead of stdin. The `<pre>` history shows the streamed
+  output verbatim.
+- **First-class shortcut.** `Ctrl+Shift+\`` opens or focuses a
+  Crew tab (mirrors Ctrl+\` for shell).
+- **Cancellation.** Esc inside a running Crew tab signals abort;
+  the helper-side process is killed, the partial output is kept
+  in scrollback with a `[cancelled]` marker.
+
+#### 9b — File-context injection + right-click action (~1.5 days)
+
+Make Crew aware of *what file the user is looking at*. The whole
+point of integrating with an explorer is the explorer-specific
+context.
+
+- **Right-click → "Ask Crew about this"** on selected files /
+  folders. Single file: prepends `--direct "Reading file: <path>.
+  "` to the user's prompt. Multi-select: lists the paths.
+  Folder: passes the directory and a tree summary (capped at 200
+  entries).
+- **`@` mention syntax inside the Crew tab input** — typing `@`
+  opens an inline picker (reuses Phase 4's palette positioning)
+  with files from the active pane's current directory. Picking
+  one inserts its absolute path. Saves the user from typing long
+  paths in prompts.
+- **`Ctrl+Shift+A` from anywhere** = "Ask Crew about active
+  pane's selection." If selection is empty, falls back to the
+  current pane path.
+- **Folder-as-context limits.** Folder mentions don't read every
+  file's content (would blow the LLM context window) — they pass
+  the path string. Crew's own MCP tools fetch content if its
+  router decides it needs to.
+
+#### 9c — Skill / agent quick-pick + output drawer (~1 day)
+
+Surface what Crew already exposes so users don't have to memorize
+flags.
+
+- **Slash-command palette inside the Crew tab.** Typing `/` at
+  the start of an input opens a picker listing skills found in
+  `~/.crew/.github/skills/` and agents in `~/.crew/.github/
+  agents/`. Selection inserts the canonical
+  `--agent <name>` / `/<skill>` flag; user adds the prompt and
+  hits Enter.
+- **Output drawer.** Crew writes to `~/.crew/outputs/` for any
+  pipeline that produces files. Add a small footer button in
+  the Crew tab: "Open last output" (navigates the active pane to
+  the most-recent file in `~/.crew/outputs/`). Saves a manual
+  `cd`.
+- **Recent prompts.** Up/Down arrow already navigates terminal
+  history (Phase 7g); Crew tabs share the same per-tab history,
+  so `↑` recalls the last prompt.
+- **Status line.** Bottom-right of the panel shows "crew vX.Y |
+  agent: <last> | turn N/cap" parsed from Crew's stderr signals
+  if available, otherwise empty.
+
+#### Risks / gotchas
+- **PATH discovery.** `crew` is installed via `pipx`, which
+  drops it in `%USERPROFILE%\.local\bin` or `%LOCALAPPDATA%\
+  pipx\venvs\…`. `where crew` finds it only if pipx ran
+  `ensurepath`. Need to fall back to a couple of well-known
+  locations before declaring it missing.
+- **Streaming format.** Crew's stdout might be plain text or it
+  might emit ANSI / token-chunked output. We treat it as plain
+  text for v1; if we see escape sequences we cope with them in
+  9c by piping through a tiny ANSI stripper (or accept the noise
+  until Phase 8b's xterm.js lands).
+- **Auth on first run.** Crew shows a device-code URL in stderr.
+  We display stderr inline so the user can copy the URL — no
+  in-app browser flow.
+- **Long answers vs the panel.** Crew responses can be paragraphs.
+  The panel's `<pre>` already wraps with `white-space: pre-wrap`
+  (Phase 7g), so this works; just verify the 4 MB ring buffer
+  doesn't truncate mid-answer.
 
 ## Open questions / debt
 
