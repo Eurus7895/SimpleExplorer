@@ -239,6 +239,24 @@ function render() {
       saveTabs();
       render();
     },
+    // Drops from stock Explorer (or any source that exposes text/uri-list).
+    // Each source path is copied/moved into the destination pane keeping
+    // its basename. Same source can't be confused with our internal
+    // drag because pane.js routes only when activeDrag is null.
+    onForeignDrop: async (dstIdx, paths, op) => {
+      if (!paths?.length) return;
+      const dst = panes[dstIdx];
+      const fn = op === 'copy' ? fs.copy : fs.move;
+      for (const src of paths) {
+        const target = fs.joinPath(dst.path, fs.basename(src));
+        try { await fn(src, target); }
+        catch (e) { console.warn(`foreign ${op} ${src} -> ${target}:`, e); }
+      }
+      await safeLoad(dst);
+      activePane = dstIdx;
+      saveTabs();
+      render();
+    },
     rerender: render,
   };
   document.documentElement.dataset.theme = ctx.theme;

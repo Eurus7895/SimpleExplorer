@@ -97,6 +97,36 @@ export function basename(path) {
   return idx === -1 ? norm : norm.slice(idx + 1);
 }
 
+// Parse a `text/uri-list` payload (RFC 2483: line-delimited URIs, lines
+// starting with `#` are comments) into local FS paths. Anything that
+// isn't `file://...` is dropped because OS drag sources from outside
+// the filesystem are not actionable for our copy/move flow.
+export function parseUriList(text) {
+  if (!text) return [];
+  return text.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .map(uriToLocalPath)
+    .filter(Boolean);
+}
+
+function uriToLocalPath(uri) {
+  if (!uri.startsWith('file:')) return null;
+  // Standard URL-decode and strip the `file://` scheme. UNC paths come
+  // through as `file://server/share/...`; we leave the leading `\\` in
+  // place. Drive paths come through as `file:///C:/...` -- drop the
+  // single leading slash before the drive letter.
+  let p;
+  try { p = decodeURIComponent(uri.replace(/^file:\/\//, '')); }
+  catch { return null; }
+  if (/^\/[A-Za-z]:/.test(p)) p = p.slice(1);
+  // Normalize to backslashes when the path is a Windows drive form
+  // (Neutralino's filesystem APIs accept either, but our other helpers
+  // expect backslash on Windows).
+  if (/^[A-Za-z]:/.test(p)) return p.replace(/\//g, '\\');
+  return p;
+}
+
 export function pathSegments(path) {
   const norm = normalizePath(path);
   if (/^[A-Za-z]:/.test(norm)) {

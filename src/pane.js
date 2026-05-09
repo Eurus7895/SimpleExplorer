@@ -184,7 +184,7 @@ export function getRecent() {
 // ── Renderers ──────────────────────────────────────────────────────────
 
 export function renderRows(state, opts = {}) {
-  const { onActivate, onPaneActivate, onRename, onDrop, paneIdx = 0, density = 'normal', accent } = opts;
+  const { onActivate, onPaneActivate, onRename, onDrop, onForeignDrop, paneIdx = 0, density = 'normal', accent } = opts;
   const items = filtered(state);
   const list = document.createElement('div');
   list.className = 'rows';
@@ -346,36 +346,67 @@ export function renderRows(state, opts = {}) {
   });
 
   // Counter avoids flicker as dragover crosses child elements.
+  // Two drop sources are accepted: another SimpleExplorer pane (DND_TYPE
+  // payload) and stock Windows Explorer (text/uri-list, the OS standard).
+  // Foreign in-app drops (e.g. from a browser) without a uri-list aren't
+  // wired in v1.
   let dragDepth = 0;
+  const isInternal = (e) => activeDrag && activeDrag.srcIdx !== paneIdx && e.dataTransfer.types.includes(DND_TYPE);
+  const isForeign = (e) => !activeDrag && e.dataTransfer.types.includes('text/uri-list');
   list.addEventListener('dragenter', (e) => {
-    if (!activeDrag || activeDrag.srcIdx === paneIdx) return;
-    if (!e.dataTransfer.types.includes(DND_TYPE)) return;
+    if (!isInternal(e) && !isForeign(e)) return;
     dragDepth += 1;
     list.classList.add('rows--drop');
   });
   list.addEventListener('dragover', (e) => {
-    if (!activeDrag || activeDrag.srcIdx === paneIdx) return;
-    if (!e.dataTransfer.types.includes(DND_TYPE)) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = dndOp(e, activeDrag.srcPath, state.path);
+    if (isInternal(e)) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = dndOp(e, activeDrag.srcPath, state.path);
+      return;
+    }
+    if (isForeign(e)) {
+      e.preventDefault();
+      // Source path is unknown until drop — bias toward copy (the safe
+      // default) and let Shift force move. dndOp's same-drive check
+      // can't run here because dataTransfer values are hidden during
+      // dragover.
+      e.dataTransfer.dropEffect = e.shiftKey ? 'move' : 'copy';
+    }
   });
   list.addEventListener('dragleave', () => {
-    if (!activeDrag || activeDrag.srcIdx === paneIdx) return;
+    if (!activeDrag && dragDepth === 0) return;
     dragDepth -= 1;
     if (dragDepth <= 0) { dragDepth = 0; list.classList.remove('rows--drop'); }
   });
   list.addEventListener('drop', (e) => {
-    if (!activeDrag || activeDrag.srcIdx === paneIdx) return;
-    const raw = e.dataTransfer.getData(DND_TYPE);
-    if (!raw) return;
-    e.preventDefault();
-    dragDepth = 0;
-    list.classList.remove('rows--drop');
-    let payload;
-    try { payload = JSON.parse(raw); } catch { return; }
-    const op = dndOp(e, payload.srcPath, state.path);
-    onDrop?.(payload.srcIdx, payload.names, op);
-    activeDrag = null;
+    if (isInternal(e)) {
+      const raw = e.dataTransfer.getData(DND_TYPE);
+      if (!raw) return;
+      e.preventDefault();
+      dragDepth = 0;
+      list.classList.remove('rows--drop');
+      let payload;
+      try { payload = JSON.parse(raw); } catch { return; }
+      const op = dndOp(e, payload.srcPath, state.path);
+      onDrop?.(payload.srcIdx, payload.names, op);
+      activeDrag = null;
+      return;
+    }
+    if (isForeign(e)) {
+      e.preventDefault();
+      dragDepth = 0;
+      list.classList.remove('rows--drop');
+      const uriList = e.dataTransfer.getData('text/uri-list');
+      const paths = fs.parseUriList(uriList);
+      if (!paths.length) return;
+      // Same-drive check on first source — assumes a uniform drag (Explorer
+      // doesn't mix drives in a single drag).
+      const op = e.ctrlKey ? 'copy'
+        : e.shiftKey ? 'move'
+        : fs.sameDrive(paths[0], state.path) ? 'move'
+        : 'copy';
+      onForeignDrop?.(paths, op);
+    }
   });
 
   return list;

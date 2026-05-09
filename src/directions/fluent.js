@@ -177,6 +177,7 @@ function paneCard(ctx, pane, i) {
     onPaneActivate: () => ctx.setActivePane(i),
     onRename: (oldName, newName) => ctx.onRename(i, oldName, newName),
     onDrop: (srcIdx, names, op) => ctx.onDrop(srcIdx, i, names, op),
+    onForeignDrop: (paths, op) => ctx.onForeignDrop(i, paths, op),
   });
   card.appendChild(rows);
   return card;
