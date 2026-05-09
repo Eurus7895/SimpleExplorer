@@ -5,13 +5,14 @@ state lives in [`design.md`](./design.md); repository conventions live
 in [`../CLAUDE.md`](../CLAUDE.md). This file is the source of truth for
 **what's painted but not wired**, and **what hasn't been started**.
 
-Status as of the last commit on `claude/review-roadmap-MKEpx`:
-post-MVP, pre-v1. Phases 1, 1.5, 2, 3, 4, 5, and 6a (Quick UX
-wins + Cmd rail redesign) have shipped. The Workspace direction
-has been removed; the remaining directions are Fluent (A) and
-Cmd (B). Remaining work: pane-activation refactor + drag-and-drop
-in Phase 6, and the Phase 7 deferred features (tree view,
-recursive search, integrated terminal, …).
+Status as of the Phase 7 branch (`feat/phase-7`):
+post-MVP, pre-v1. Phases 1, 1.5, 2, 3, 4, 5, 6a, 6b, and 7
+have shipped. The Workspace direction has been removed; the
+remaining directions are Fluent (A) and Cmd (B). Remaining
+work: the **Phase 8 polish + scaling pass** (big-dir listing
+perf, tree virtualization, real PTY-backed terminal, copy/move
+progress + conflict UI, selection keyboard ergonomics) and the
+items in [Open questions / debt](#open-questions--debt).
 
 ## Shipped
 
@@ -675,6 +676,121 @@ skin keeps "Open in Terminal" as an external spawn.
   flush coalesce. Cheap fallback for Windows < 1809: plain
   `os.spawnProcess` without PTY semantics — works for line-oriented
   commands, breaks for vim/less.
+
+### Phase 8 — Polish, scaling, real terminal (sequenced)
+
+Where Phase 7 was a feature-breadth push, Phase 8 is the cleanup
+and scaling pass. Four sub-phases, total ~9 days. Ordered by user
+impact: 8a fixes the only place the app feels visibly slow,
+8b unlocks the deferred terminal upgrade, 8c stops silent
+data-overwrite footguns, 8d closes the keyboard-ergonomics gap
+that real-Windows usage exposed.
+
+| Sub-phase | Theme | Size | Helper? | Risk |
+| --- | --- | --- | --- | --- |
+| 8a | Listing perf + tree virtualization | 2d | no | low |
+| 8b | Helper rebuild + ConPTY + xterm.js | 4d | **yes** (new `pty` verb) | high |
+| 8c | Copy/move polish: progress, conflict, cancel | 2d | no | med |
+| 8d | Selection keyboard ergonomics | 1d | no | low |
+
+#### 8a — Listing perf + tree virtualization (~2 days)
+
+Two related "things slow down on big trees" fixes, batched.
+
+- **Big-directory listing.** `fs.listDir` currently does
+  `Promise.all` over `getStats` for every entry. On a 10 k-file
+  folder that's 10 k Neutralino IPC round-trips — visibly slow
+  (10+ s on cold cache). Fix: skip per-file stat on first paint,
+  emit name + is_dir + extension directly from `readDirectory`
+  results, then fill in size + modified asynchronously per
+  visible row (or per the active sort key). Falls back to the
+  current eager path when the entry count is small (~< 200) so
+  small-folder navigation stays instant.
+- **Tree virtualization.** Phase 7f rendered every visible node;
+  `src/tree.js` ships unvirtualized by design. Replace the inner
+  list rendering with a windowed view: fixed row height (24 px),
+  spacers above/below to preserve scroll geometry, only the
+  rows in the current viewport ± 8-row buffer are in DOM.
+  Works because expanded children are already eagerly fetched —
+  we're just gating DOM creation on visibility.
+- Out of scope: lazy-load row stats inside the *tree* (it only
+  shows folder names, no size/modified). Just the directory pane.
+
+#### 8b — Helper rebuild + ConPTY + xterm.js (~4 days)
+
+The promised real terminal upgrade. Phase 7g shipped a
+line-oriented stub that breaks for vim / less / top; this phase
+delivers the proper PTY-backed terminal.
+
+- **Helper rebuild.** `extras/shellhelp.exe` needs a fresh
+  Windows MSVC pass to pick up the `thumb` + `dragout` verbs from
+  Phase 7e *and* the new `pty` verb landing here. Ship the
+  rebuild as part of this phase so 7e and 8b light up together.
+- **`pty` helper verb.** `tools/shellhelp.cpp` gains a ConPTY
+  wrapper: `CreatePseudoConsole`, `ResizePseudoConsole`,
+  `ClosePseudoConsole`. Spawns the chosen shell under the PTY,
+  forwards bytes both ways via stdin/stdout, accepts JSON
+  control messages on a sentinel-prefixed stdin line for resize.
+- **xterm.js renderer.** Vendor xterm.js into `extras/xterm/`
+  (no CDN — the app must work offline). Replace `src/terminal.js`
+  v1's `<pre>` + input pair with an xterm.js Terminal mounted
+  in `.term__body`. Bytes from the helper feed `term.write(buf)`;
+  user keystrokes feed `term.onData(d => helper.stdin.write(d))`.
+- **Resize plumbing.** `ResizeObserver` on the panel computes
+  cols/rows from `term.cols / term.rows`, sends a JSON resize
+  message to the helper, helper calls `ResizePseudoConsole`.
+- **Fallback.** Keep the line-oriented v1 path behind a
+  `settings.terminal.usePty: false` toggle so users on
+  Windows < 1809 (no ConPTY) or with a missing helper still get
+  the v1 experience. Auto-detect at first launch.
+- **Risks.** ConPTY's escape-sequence translation is imperfect;
+  xterm.js's chunked-write performance under burst output may
+  need a 16 ms flush coalesce. xterm.js bundle is ~200 KB —
+  acceptable but the largest single dep we'll have shipped.
+
+#### 8c — Copy/move polish: progress, conflict, cancel (~2 days)
+
+Today a multi-GB drag silently blocks the UI; a same-name drop
+silently overwrites; there's no cancel. All three are foot-guns
+on real-Windows usage.
+
+- **Progress overlay.** A small toast/strip at the bottom of the
+  active pane shows N of M items copied/moved with a byte
+  progress bar. Wired into both internal pane DnD and foreign
+  Explorer-drop paths (the `onDrop` / `onForeignDrop` handlers in
+  `app.js`). The strip is dismissible and auto-fades on
+  completion.
+- **Conflict resolution.** When the destination already has a
+  same-named entry, raise a small modal: Skip / Replace / Keep
+  Both (auto-rename to `name (2).ext`) / Cancel. "Apply to all"
+  checkbox to handle large batches. Default action: Skip
+  (safest); Enter binds to the highlighted button.
+- **Cancellation.** Each in-flight operation gets an
+  AbortController; the progress strip's × button signals it. The
+  copy loop checks the signal between files. Partial state is
+  left as-is (no rollback in v1) — the user can finish manually.
+- Out of scope: pause/resume, post-completion "show in Explorer"
+  hint, copy-to-clipboard-then-paste flow (separate phase).
+
+#### 8d — Selection keyboard ergonomics (~1 day)
+
+The selection model (`pane.selected: Set<string>`) supports
+multi-select via Ctrl/Shift+click but has no keyboard shortcuts.
+Closes the gap with stock Explorer.
+
+- `Ctrl+A` selects every visible row in the active pane.
+- `Shift+ArrowDown` / `Shift+ArrowUp` extend the selection from
+  the anchor (last single-clicked row) one row at a time. Track
+  `pane.selectionAnchor` so a fresh single-click resets it.
+- `Home` / `End` move the focused row to first / last visible;
+  `Shift+Home` / `Shift+End` extend the selection there.
+- `Ctrl+Click` toggles individual rows (already works via the
+  click handler) — no change, just verify it.
+- All of this respects the focus-zone gate from the recent fix:
+  shortcuts only fire when the active pane card has focus, not
+  when the terminal does.
+- Out of scope: rubber-band select (drag-to-select rectangle) —
+  bigger UX change, separate phase.
 
 ## Open questions / debt
 
