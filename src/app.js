@@ -446,6 +446,19 @@ async function doAction(action) {
       await fs.copyPath(target);
       break;
     }
+    case 'dragOut': {
+      // OS drag egress via the helper's DoDragDrop verb. The helper
+      // blocks while the user holds the drag; on release we refresh
+      // the source pane in case the drop was a Move.
+      if (!pane.selected.size) return;
+      const paths = [...pane.selected].map((n) => fs.joinPath(pane.path, n));
+      const effect = await fs.dragOut(paths);
+      if (effect === 2 /* DROPEFFECT_MOVE */) {
+        await safeLoad(pane);
+        render();
+      }
+      break;
+    }
     case 'deletePerm': {
       if (!pane.selected.size) return;
       if (!confirm(`Permanently delete ${pane.selected.size} item(s)? This cannot be undone.`)) return;

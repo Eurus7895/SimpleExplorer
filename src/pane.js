@@ -5,6 +5,7 @@
 
 import { iconHTML, kindFor } from './icons.js';
 import * as fs from './fs.js';
+import { getThumbnail, shouldThumbnail } from './thumbnails.js';
 
 const RECENT_KEY = 'simple-explorer.recent';
 const MAX_RECENT = 12;
@@ -261,6 +262,23 @@ export function renderRows(state, opts = {}) {
     kindCell.textContent = it.is_dir ? 'Folder' : (it.extension || 'File').toUpperCase();
 
     row.append(nameCell, sizeCell, modCell, kindCell);
+
+    // Tiles view: swap the kind glyph for a real thumbnail when the
+    // helper is available and the entry is image/video. Async fill -
+    // the kind icon stays visible while the helper runs, so the grid
+    // never blanks during scroll.
+    if (view === 'tiles' && shouldThumbnail(it)) {
+      getThumbnail(it, 96).then((url) => {
+        if (!url) return;
+        const iconEl = nameCell.querySelector('svg.icn');
+        if (!iconEl) return;
+        const img = document.createElement('img');
+        img.className = 'row__thumb';
+        img.src = url;
+        img.alt = '';
+        iconEl.replaceWith(img);
+      }).catch(() => {});
+    }
 
     row.addEventListener('click', (e) => {
       if (e.shiftKey || e.metaKey || e.ctrlKey) {
@@ -593,6 +611,7 @@ const CURATED_ITEMS = [
   { label: 'Open in Terminal',  act: 'terminal', dirOnly: true },
   null,
   { label: 'Copy path',         act: 'copyPath' },
+  { label: 'Drag out to OS…',   act: 'dragOut' },
   { label: 'Rename',            act: 'rename', kbd: 'F2' },
   { label: 'Delete',            act: 'delete', kbd: 'Del' },
   null,

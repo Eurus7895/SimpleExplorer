@@ -209,6 +209,40 @@ export async function helperInvoke(id, paths) {
   return true;
 }
 
+// Generate a thumbnail via IShellItemImageFactory and return a blob URL
+// that the caller can stick in an <img src=...>. The helper writes a
+// short-lived PNG to %TEMP% and prints its path; we read the bytes back
+// and wrap them in a Blob. Returns null when the helper isn't built or
+// the thumbnail can't be produced (e.g. disk error). Caller is responsible
+// for revoking the URL when done — thumbnails.js's LRU does that.
+export async function thumbnail(path, size = 96) {
+  if (!N || !(await helperAvailable())) return null;
+  let r;
+  try { r = await runHelper('thumb', String(size), path); }
+  catch { return null; }
+  if (r.exitCode !== 0) return null;
+  const tempPath = (r.stdOut || '').trim();
+  if (!tempPath) return null;
+  let buf;
+  try { buf = await N.filesystem.readBinaryFile(tempPath); }
+  catch { return null; }
+  // Cleanup the temp PNG; the Blob keeps an in-memory copy.
+  N.filesystem.remove(tempPath).catch(() => {});
+  return URL.createObjectURL(new Blob([buf], { type: 'image/png' }));
+}
+
+// Drag selected paths out to the OS via the helper's DoDragDrop wrapper.
+// Blocks while the user holds the drag; resolves with the chosen
+// DROPEFFECT (1=copy, 2=move, 4=link, 0=cancelled). Returns 0 when the
+// helper is missing.
+export async function dragOut(paths) {
+  if (!N || !(await helperAvailable()) || !paths?.length) return 0;
+  let r;
+  try { r = await runHelper('dragout', ...paths); }
+  catch { return 0; }
+  return parseInt((r.stdOut || '').trim(), 10) || 0;
+}
+
 async function exec(cmd) {
   if (!N) { console.warn('[mock] exec', cmd); return { stdOut: '', stdErr: '', exitCode: 0 }; }
   try {

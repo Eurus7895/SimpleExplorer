@@ -581,6 +581,14 @@ body.is-resizing-col .row, body.is-resizing-row .row { pointer-events: none; }
 .rows--tiles .row__name { flex-direction: column; gap: 4px; max-width: 100%; }
 .rows--tiles .row__name .icn { width: 28px !important; height: 28px !important; }
 .rows--tiles .row__label { font-size: 11px; line-height: 1.2; max-width: 86px; }
+/* Thumbnail swap-in: replaces the kind glyph for image / video tiles
+   when the helper's `thumb` verb succeeds (Phase 7e). Sized to roughly
+   match the kind icon footprint so the rest of the tile doesn't reflow. */
+.rows--tiles .row__thumb {
+  width: 48px; height: 48px; object-fit: cover;
+  border-radius: 4px; background: var(--surface2);
+  flex-shrink: 0;
+}
 .rows--tiles .row__size,
 .rows--tiles .row__mod,
 .rows--tiles .row__kind { display: none; }
