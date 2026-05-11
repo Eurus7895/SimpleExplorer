@@ -137,6 +137,7 @@ export async function newTerminal(cwd) {
     tab.handlerOff = N.events.on('spawnedProcess', (e) => {
       if (e.detail?.id !== proc.id) return;
       const { action, data } = e.detail;
+      console.debug('[term] proc evt', action, typeof data === 'string' ? data.length : data);
       if (action === 'stdOut' || action === 'stdErr') {
         // xterm.js parses ANSI + escape sequences itself.
         if (typeof data === 'string') tab.term.write(data);
@@ -156,7 +157,8 @@ export async function newTerminal(cwd) {
       try {
         const r = N.os.updateSpawnedProcess(tab.proc.id, 'stdIn', d);
         if (r && typeof r.then === 'function') {
-          r.catch((err) => console.warn('[term] stdIn failed:', err));
+          r.then((res) => console.debug('[term] stdIn ok', res),
+                 (err) => console.warn('[term] stdIn failed:', err));
         }
       } catch (e) {
         console.warn('[term] stdIn threw:', e);
