@@ -160,11 +160,7 @@ export async function newTerminal(cwd) {
     });
 
     // PTY input: forward every keystroke / paste chunk to the helper.
-    // Logs land in DevTools console (Ctrl+Shift+I in the Neutralino
-    // window) so the chain xterm → JS → helper can be diagnosed when
-    // a key seems to "go nowhere".
     tab.term.onData((d) => {
-      console.debug('[term] onData', JSON.stringify(d), 'proc=', tab.proc?.id);
       if (!tab.proc) return;
       try {
         const r = N.os.updateSpawnedProcess(tab.proc.id, 'stdIn', b64utf8(d));
