@@ -34,18 +34,6 @@ const PTY_CTL_PREFIX = '\x1b]SE_CTL;';
 const PTY_CTL_TERM = '\x07';
 const HELPER_PATH = 'extras\\shellhelp.exe';
 
-// Neutralino 5.x server base64-decodes the `data` argument of
-// `os.updateSpawnedProcess(id, 'stdIn', ...)` before writing to the
-// child's stdin pipe. Passing raw bytes silently drops the payload
-// (the call still resolves with success:true). Encode UTF-8 → bytes
-// → binary string → base64 so non-ASCII keystrokes round-trip too.
-function b64utf8(s) {
-  const bytes = new TextEncoder().encode(s);
-  let bin = '';
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin);
-}
-
 // Per-tab runtime state. Tabs are
 //   { id, shell, cwd, term, fit, proc, handlerOff, missing? }
 // `focusOnRender` is a one-shot flag honored once and cleared. Set when
@@ -161,9 +149,10 @@ export async function newTerminal(cwd) {
 
     // PTY input: forward every keystroke / paste chunk to the helper.
     tab.term.onData((d) => {
+      console.debug('[term] onData', JSON.stringify(d), 'proc=', tab.proc?.id);
       if (!tab.proc) return;
       try {
-        const r = N.os.updateSpawnedProcess(tab.proc.id, 'stdIn', b64utf8(d));
+        const r = N.os.updateSpawnedProcess(tab.proc.id, 'stdIn', d);
         if (r && typeof r.then === 'function') {
           r.catch((err) => console.warn('[term] stdIn failed:', err));
         }
@@ -207,7 +196,7 @@ function sendResize(tab) {
   const cols = tab.term.cols, rows = tab.term.rows;
   if (!cols || !rows) return;
   const msg = `${PTY_CTL_PREFIX}resize;${cols};${rows}${PTY_CTL_TERM}`;
-  try { window.Neutralino.os.updateSpawnedProcess(tab.proc.id, 'stdIn', b64utf8(msg)); }
+  try { window.Neutralino.os.updateSpawnedProcess(tab.proc.id, 'stdIn', msg); }
   catch {}
 }
 
