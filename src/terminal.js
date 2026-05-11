@@ -53,6 +53,7 @@ function writeToPipe(tab, data) {
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
         await window.Neutralino.filesystem.appendFile(tab.pipePath, data);
+        console.debug('[term] pipe write ok', JSON.stringify(data), 'attempt=', attempt);
         return;
       } catch (e) {
         if (attempt === 4) {
@@ -203,6 +204,7 @@ export async function newTerminal(cwd) {
     // PTY input: forward every keystroke / paste chunk to the helper
     // over the named pipe announced via the stdOut sentinel above.
     tab.term.onData((d) => {
+      console.debug('[term] onData', JSON.stringify(d), 'pipe=', tab.pipePath);
       if (!tab.proc || !tab.pipePath) return;
       writeToPipe(tab, d);
     });
