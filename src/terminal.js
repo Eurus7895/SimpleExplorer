@@ -37,27 +37,32 @@ const HELPER_PATH = 'extras\\shellhelp.exe';
 // `Neutralino.os.updateSpawnedProcess(..., 'stdIn', ...)` is broken on
 // Windows (upstream issue #1297: writes resolve success but bytes never
 // reach the child, because Neutralino wraps every Windows spawn in
-// `cmd.exe /c "..."` and the wrapping cmd owns the pipe). We sidestep
-// it: the helper exposes a per-instance named pipe and announces its
-// name on stdout with this prefix; we open the pipe via
-// `filesystem.appendFile` for each keystroke / control message.
-const PIPE_SENTINEL_RE = /shellhelp\.pty\.pipe=([^\r\n]+)\r?\n/;
+// `cmd.exe /c "..."` and the wrapping cmd owns the pipe). An earlier
+// fix tried writing to a server-side named pipe via
+// `filesystem.appendFile`, but that ALSO resolved success without
+// delivering bytes — the CRT's `std::ofstream("ab")` open path doesn't
+// recognize `\\.\pipe\…` and silently fails. The helper now exposes a
+// loopback TCP listener and announces its port via this sentinel; we
+// `fetch` one POST per keystroke.
+const PORT_SENTINEL_RE = /shellhelp\.pty\.port=(\d+)\r?\n/;
 
-// Per-tab append-file queue. Serializes writes so a burst of onData
-// events from xterm.js can't open the single-instance pipe
-// concurrently and hit ERROR_PIPE_BUSY. Each write also retries a few
-// times in case the helper is between accept loops.
+// Per-tab write queue. Serializes POSTs so the helper's accept loop
+// doesn't have to fan out, and so log ordering matches the typing
+// order. The fetch itself has connect-level retry built in by the
+// stack, but we add a small backoff loop for the brief window during
+// helper startup before the listener is bound.
 function writeToPipe(tab, data) {
   const next = (tab.writeQueue || Promise.resolve()).then(async () => {
-    if (!tab.pipePath) return;
+    if (!tab.port) return;
+    const url = `http://127.0.0.1:${tab.port}/`;
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
-        await window.Neutralino.filesystem.appendFile(tab.pipePath, data);
-        console.debug('[term] pipe write ok', JSON.stringify(data), 'attempt=', attempt);
+        await fetch(url, { method: 'POST', body: data });
+        console.debug('[term] tcp write ok', JSON.stringify(data), 'attempt=', attempt);
         return;
       } catch (e) {
         if (attempt === 4) {
-          console.warn('[term] pipe write failed:', e);
+          console.warn('[term] tcp write failed:', e);
           return;
         }
         await new Promise((r) => setTimeout(r, 5 * (attempt + 1)));
@@ -155,7 +160,7 @@ export async function newTerminal(cwd) {
     shell, cwd: cwd || '',
     term: made.term, fit: made.fit,
     proc: null, handlerOff: null,
-    pipePath: null, pipeBuf: '', writeQueue: null,
+    port: null, pipeBuf: '', writeQueue: null,
   };
 
   // Build the helper command line. Quote each arg so paths with spaces
@@ -174,20 +179,20 @@ export async function newTerminal(cwd) {
       const { action, data } = e.detail;
       if (action === 'stdOut' || action === 'stdErr') {
         if (typeof data !== 'string') return;
-        // Pre-sentinel: hold output back so the pipe-announcement line
-        // doesn't render in xterm and so we don't try to write
-        // keystrokes before the helper has the pipe up.
-        if (!tab.pipePath) {
+        // Pre-sentinel: hold output back so the port-announcement line
+        // doesn't render in xterm and so we don't try to POST before
+        // the helper's listener is up.
+        if (!tab.port) {
           tab.pipeBuf += data;
-          const m = tab.pipeBuf.match(PIPE_SENTINEL_RE);
+          const m = tab.pipeBuf.match(PORT_SENTINEL_RE);
           if (m) {
-            tab.pipePath = m[1];
+            tab.port = parseInt(m[1], 10);
             const before = tab.pipeBuf.slice(0, m.index);
             const after = tab.pipeBuf.slice(m.index + m[0].length);
             tab.pipeBuf = '';
             if (before) tab.term.write(before);
             if (after) tab.term.write(after);
-            console.debug('[term] pipe ready:', tab.pipePath);
+            console.debug('[term] listener ready on port', tab.port);
           }
           return;
         }
@@ -202,10 +207,10 @@ export async function newTerminal(cwd) {
     });
 
     // PTY input: forward every keystroke / paste chunk to the helper
-    // over the named pipe announced via the stdOut sentinel above.
+    // over the loopback TCP listener announced via the stdOut sentinel.
     tab.term.onData((d) => {
-      console.debug('[term] onData', JSON.stringify(d), 'pipe=', tab.pipePath);
-      if (!tab.proc || !tab.pipePath) return;
+      console.debug('[term] onData', JSON.stringify(d), 'port=', tab.port);
+      if (!tab.proc || !tab.port) return;
       writeToPipe(tab, d);
     });
 
@@ -214,8 +219,8 @@ export async function newTerminal(cwd) {
     // (input still won't work — that points at a helper that's too
     // old or a build mismatch, which the log line below signals).
     setTimeout(() => {
-      if (!tab.pipePath && tab.proc) {
-        console.warn('[term] no pipe sentinel after 1s; flushing buffered output');
+      if (!tab.port && tab.proc) {
+        console.warn('[term] no port sentinel after 1s; flushing buffered output');
         if (tab.pipeBuf) { tab.term.write(tab.pipeBuf); tab.pipeBuf = ''; }
       }
     }, 1000);
@@ -251,7 +256,7 @@ export async function switchTerminal(idx) {
 }
 
 function sendResize(tab) {
-  if (!tab?.pipePath || !tab.term) return;
+  if (!tab?.port || !tab.term) return;
   const cols = tab.term.cols, rows = tab.term.rows;
   if (!cols || !rows) return;
   const msg = `${PTY_CTL_PREFIX}resize;${cols};${rows}${PTY_CTL_TERM}`;

@@ -21,6 +21,10 @@
 //   shellhelp dragout <path> [<path> ...]   — start CF_HDROP DoDragDrop; print effect
 //   shellhelp pty <shell> [<cwd>]           — spawn shell under ConPTY, pump bytes
 
+// winsock2 must precede windows.h so the older winsock.h doesn't get
+// pulled in by windows.h and collide with WSA types.
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <shlobj.h>
 #include <shobjidl.h>
@@ -32,6 +36,8 @@
 #include <wchar.h>
 #include <string.h>
 #include <stdlib.h>
+
+#pragma comment(lib, "ws2_32.lib")
 
 // ID range for QueryContextMenu. 1-based — id 0 means "no command".
 #define CTX_ID_MIN  1
@@ -525,14 +531,17 @@ struct PtyCtx {
     HPCON  hpc;
     PFN_ResizePseudoConsole pResize;
     volatile LONG running;
-    // Named pipe the JS side opens to deliver keystrokes + control
-    // messages. Neutralino's `os.updateSpawnedProcess(..., 'stdIn', ...)`
-    // is broken on Windows (upstream issue #1297: writes succeed but
-    // bytes never reach the child, because every Windows spawn is
-    // wrapped in `cmd.exe /c "..."` and the wrapping cmd owns the
-    // pipe), so we bypass it with a server-side named pipe here and
-    // a `Neutralino.filesystem.appendFile` client in src/terminal.js.
-    wchar_t pipeName[64]; // \\.\pipe\shellhelp-pty-<pid>
+    // Loopback TCP listener the JS side hits with one HTTP POST per
+    // keystroke / control message. Replaces the previous named-pipe
+    // approach: Neutralino's filesystem.appendFile resolved success
+    // without delivering bytes to `\\.\pipe\…` paths on Windows
+    // (std::ofstream with mode "ab" opens the path via the CRT, which
+    // doesn't recognize the pipe namespace and silently failed). The
+    // root cause one layer up — os.updateSpawnedProcess('stdIn', …) is
+    // broken because Neutralino wraps every spawn in `cmd.exe /c` —
+    // is still the reason we can't use stdin. TCP sidesteps both.
+    SOCKET listenSock;
+    int    listenPort;
 };
 
 // Thread: read PTY output → write to our stdout. xterm.js renders bytes
@@ -579,115 +588,182 @@ static void apply_control(PtyCtx* c, const char* payload, size_t n) {
     }
 }
 
-// Thread: server-side of the input named pipe. Each iteration creates
-// a fresh single-instance pipe, accepts one client connection, drains
-// it until EOF, then loops. JS (Neutralino.filesystem.appendFile) does
-// open-write-close per keystroke / control message, so the loop runs
-// once per chunk. The byte stream is processed exactly like the old
-// stdin pump used to be — control-message state machine, then write
-// passthrough bytes to the PTY input pipe.
+// Feed a chunk of bytes from a POST body through the OSC-framed control
+// state machine, dispatching control messages and writing passthrough
+// bytes to the PTY input pipe. State is owned by the caller so a
+// control message that straddles two POSTs still reassembles.
 //
-// State machine (unchanged from the previous stdin-pump):
+// State machine:
 //   0 — passthrough; on ESC, switch to 1 and stash it
 //   1 — saw ESC; on ']', match prefix; otherwise flush ESC + this byte
 //   2 — capturing payload until BEL; on BEL, dispatch and return to 0
 //
-// The state lives ACROSS pipe instances so a control message that
-// straddles two writes still reassembles correctly.
+// Returns false if writing to the PTY input pipe fails (shell dying).
+static bool feed_pty_input(PtyCtx* c, const char* buf, int n,
+                           int* state, size_t* prefixMatched,
+                           char* payload, size_t* payloadLen) {
+    char out[4096];
+    size_t outLen = 0;
+
+    auto flush = [&]() -> bool {
+        if (outLen == 0) return true;
+        DWORD written = 0;
+        const char* p = out;
+        size_t remaining = outLen;
+        while (remaining > 0) {
+            if (!WriteFile(c->inputWrite, p, (DWORD)remaining, &written, NULL) ||
+                written == 0) {
+                outLen = 0;
+                return false;
+            }
+            p += written;
+            remaining -= written;
+        }
+        outLen = 0;
+        return true;
+    };
+
+    for (int i = 0; i < n; ++i) {
+        char b = buf[i];
+        if (*state == 0) {
+            if (b == '\x1b') { *state = 1; *prefixMatched = 1; }
+            else { out[outLen++] = b; }
+        } else if (*state == 1) {
+            if (*prefixMatched < PTY_CTL_PREFIX_N &&
+                b == PTY_CTL_PREFIX[*prefixMatched]) {
+                (*prefixMatched)++;
+                if (*prefixMatched == PTY_CTL_PREFIX_N) {
+                    *state = 2;
+                    *payloadLen = 0;
+                }
+            } else {
+                for (size_t k = 0; k < *prefixMatched; ++k) {
+                    out[outLen++] = PTY_CTL_PREFIX[k];
+                }
+                *state = 0;
+                *prefixMatched = 0;
+                --i;
+            }
+        } else {
+            if (b == PTY_CTL_TERM) {
+                apply_control(c, payload, *payloadLen);
+                *state = 0; *prefixMatched = 0; *payloadLen = 0;
+            } else if (*payloadLen < 511) {
+                payload[(*payloadLen)++] = b;
+            } else {
+                *state = 0; *prefixMatched = 0; *payloadLen = 0;
+            }
+        }
+        // Keep `out` from overflowing on large pastes. Headroom of
+        // PTY_CTL_PREFIX_N covers the worst-case "flush stashed prefix"
+        // path that can append several bytes in a single iteration.
+        if (outLen >= sizeof(out) - PTY_CTL_PREFIX_N - 1) {
+            if (!flush()) return false;
+        }
+    }
+    return flush();
+}
+
+// Thread: accept() loop on a 127.0.0.1 TCP listener. Each accepted
+// connection is one HTTP POST whose body is forwarded to the PTY (or
+// parsed as a control message). Replaces the prior named-pipe pump —
+// see the PtyCtx comment for the reason.
+//
+// Why HTTP and not raw bytes: the JS side has to use `fetch` because
+// Neutralino doesn't expose raw sockets. Speaking HTTP back means a
+// simple POST with `Content-Type: text/plain` (the browser default for
+// a string `body`) skips CORS preflight, so we just need to honor
+// Content-Length and respond 204.
 static unsigned __stdcall pump_in(void* arg) {
     PtyCtx* c = (PtyCtx*)arg;
 
-    int state = 0;             // 0 normal, 1 saw-ESC, 2 capturing payload
-    size_t prefixMatched = 0;  // bytes of PTY_CTL_PREFIX matched after ESC
+    int state = 0;
+    size_t prefixMatched = 0;
     char payload[512];
     size_t payloadLen = 0;
 
     while (InterlockedCompareExchange(&c->running, 0, 0)) {
-        HANDLE pipe = CreateNamedPipeW(
-            c->pipeName,
-            PIPE_ACCESS_INBOUND,
-            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-            1,              // one instance at a time; JS retries on busy
-            0, 64 * 1024,   // no outbound buffer; 64K inbound
-            0, NULL);
-        if (pipe == INVALID_HANDLE_VALUE) {
-            Sleep(10);
-            continue;
-        }
-        // ConnectNamedPipe blocks until a client opens the path. A
-        // client that opens between CreateNamedPipe and ConnectNamedPipe
-        // returns ERROR_PIPE_CONNECTED instead of FALSE — treat that as
-        // success.
-        if (!ConnectNamedPipe(pipe, NULL) &&
-            GetLastError() != ERROR_PIPE_CONNECTED) {
-            CloseHandle(pipe);
+        sockaddr_in caddr;
+        int caddrLen = sizeof(caddr);
+        SOCKET cs = accept(c->listenSock, (sockaddr*)&caddr, &caddrLen);
+        if (cs == INVALID_SOCKET) {
+            // Listener closed (shutdown) or transient error.
+            if (!InterlockedCompareExchange(&c->running, 0, 0)) break;
+            Sleep(5);
             continue;
         }
 
-        char buf[4096];
-        DWORD n = 0;
-        while (InterlockedCompareExchange(&c->running, 0, 0)) {
-            if (!ReadFile(pipe, buf, sizeof(buf), &n, NULL) || n == 0) break;
-            char out[4096];
-            size_t outLen = 0;
-            for (DWORD i = 0; i < n; ++i) {
-                char b = buf[i];
-                if (state == 0) {
-                    if (b == '\x1b') { state = 1; prefixMatched = 1; }
-                    else { out[outLen++] = b; }
-                } else if (state == 1) {
-                    if (prefixMatched < PTY_CTL_PREFIX_N &&
-                        b == PTY_CTL_PREFIX[prefixMatched]) {
-                        prefixMatched++;
-                        if (prefixMatched == PTY_CTL_PREFIX_N) {
-                            state = 2;
-                            payloadLen = 0;
-                        }
-                    } else {
-                        for (size_t k = 0; k < prefixMatched; ++k) {
-                            out[outLen++] = PTY_CTL_PREFIX[k];
-                        }
-                        state = 0;
-                        prefixMatched = 0;
-                        --i;
-                    }
-                } else {  // state == 2
-                    if (b == PTY_CTL_TERM) {
-                        apply_control(c, payload, payloadLen);
-                        state = 0;
-                        prefixMatched = 0;
-                        payloadLen = 0;
-                    } else if (payloadLen < sizeof(payload) - 1) {
-                        payload[payloadLen++] = b;
-                    } else {
-                        state = 0;
-                        prefixMatched = 0;
-                        payloadLen = 0;
-                    }
+        // Read headers until \r\n\r\n. 8 KiB is plenty for our own client
+        // (browsers send ~300 B of headers for a simple POST).
+        char hdr[8192];
+        int hdrLen = 0;
+        int bodyStart = -1;
+        while (hdrLen < (int)sizeof(hdr) - 1) {
+            int n = recv(cs, hdr + hdrLen, (int)sizeof(hdr) - 1 - hdrLen, 0);
+            if (n <= 0) break;
+            hdrLen += n;
+            for (int i = 0; i + 3 < hdrLen; ++i) {
+                if (hdr[i] == '\r' && hdr[i+1] == '\n' &&
+                    hdr[i+2] == '\r' && hdr[i+3] == '\n') {
+                    bodyStart = i + 4;
+                    break;
                 }
             }
-            if (outLen > 0) {
-                DWORD written = 0;
-                const char* p = out;
-                size_t remaining = outLen;
-                while (remaining > 0) {
-                    if (!WriteFile(c->inputWrite, p, (DWORD)remaining, &written, NULL) ||
-                        written == 0) {
-                        // PTY input pipe is gone — shell is dying. Drop
-                        // the pipe and exit the pump; process tear-down
-                        // will handle the rest.
-                        DisconnectNamedPipe(pipe);
-                        CloseHandle(pipe);
-                        return 0;
-                    }
-                    p += written;
-                    remaining -= written;
-                }
+            if (bodyStart >= 0) break;
+        }
+        if (bodyStart < 0) { closesocket(cs); continue; }
+
+        // Parse Content-Length out of the header block. Null-terminate at
+        // bodyStart so the case-insensitive scan can't run into body bytes.
+        hdr[bodyStart] = 0;
+        int contentLength = 0;
+        for (int i = 0; i < bodyStart - 15; ++i) {
+            if (_strnicmp(hdr + i, "content-length:", 15) == 0) {
+                int j = i + 15;
+                while (j < bodyStart && (hdr[j] == ' ' || hdr[j] == '\t')) j++;
+                contentLength = atoi(hdr + j);
+                break;
             }
         }
+        // Sanity cap: refuse pathological lengths so a malformed header
+        // can't make us read forever.
+        if (contentLength < 0 || contentLength > (1 << 20)) contentLength = 0;
 
-        DisconnectNamedPipe(pipe);
-        CloseHandle(pipe);
+        // Body bytes already buffered with the headers.
+        int inHdr = hdrLen - bodyStart;
+        if (inHdr > contentLength) inHdr = contentLength;
+        bool ok = true;
+        if (inHdr > 0) {
+            ok = feed_pty_input(c, hdr + bodyStart, inHdr,
+                                &state, &prefixMatched, payload, &payloadLen);
+        }
+
+        // Drain the rest off the wire in chunks.
+        char chunk[4096];
+        int remaining = contentLength - inHdr;
+        while (ok && remaining > 0 && InterlockedCompareExchange(&c->running, 0, 0)) {
+            int want = remaining < (int)sizeof(chunk) ? remaining : (int)sizeof(chunk);
+            int got = recv(cs, chunk, want, 0);
+            if (got <= 0) break;
+            ok = feed_pty_input(c, chunk, got,
+                                &state, &prefixMatched, payload, &payloadLen);
+            remaining -= got;
+        }
+
+        const char* resp =
+            "HTTP/1.1 204 No Content\r\n"
+            "Access-Control-Allow-Origin: *\r\n"
+            "Connection: close\r\n"
+            "Content-Length: 0\r\n\r\n";
+        send(cs, resp, (int)strlen(resp), 0);
+        shutdown(cs, SD_SEND);
+        closesocket(cs);
+
+        if (!ok) {
+            // PTY input pipe is gone — shell is dying. Stop accepting;
+            // process tear-down will reap us.
+            return 0;
+        }
     }
     return 0;
 }
@@ -784,18 +860,44 @@ static int verb_pty(int argc, wchar_t** argv) {
     ctx.outputRead = outputRead;
     ctx.hpc = hpc;
     ctx.pResize = pResize;
+    ctx.listenSock = INVALID_SOCKET;
     InterlockedExchange(&ctx.running, 1);
 
-    // Build the input pipe name (PID-unique so multiple terminals
-    // coexist) and announce it to JS via stdout before any PTY output
-    // can interleave. src/terminal.js buffers stdOut, scans for this
-    // sentinel, strips the line from xterm output, and opens the path
-    // via Neutralino.filesystem.appendFile for every keystroke.
-    swprintf_s(ctx.pipeName, _countof(ctx.pipeName),
-               L"\\\\.\\pipe\\shellhelp-pty-%lu",
-               GetCurrentProcessId());
-    printf("shellhelp.pty.pipe=\\\\.\\pipe\\shellhelp-pty-%lu\n",
-           (unsigned long)GetCurrentProcessId());
+    // Bring up a 127.0.0.1 TCP listener on an OS-assigned port, then
+    // announce the port to JS via stdout before any PTY output can
+    // interleave. src/terminal.js buffers stdOut, scans for this
+    // sentinel, strips the line from xterm output, and POSTs each
+    // keystroke / control message to http://127.0.0.1:<port>/.
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+        fwprintf(stderr, L"shellhelp: WSAStartup failed (%d)\n", WSAGetLastError());
+        pClose(hpc);
+        return 1;
+    }
+    SOCKET ls = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (ls == INVALID_SOCKET) {
+        fwprintf(stderr, L"shellhelp: socket failed (%d)\n", WSAGetLastError());
+        WSACleanup();
+        pClose(hpc);
+        return 1;
+    }
+    sockaddr_in laddr = {};
+    laddr.sin_family = AF_INET;
+    laddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    laddr.sin_port = 0;  // OS-assigned, harvested via getsockname below
+    if (bind(ls, (sockaddr*)&laddr, sizeof(laddr)) == SOCKET_ERROR ||
+        listen(ls, 8) == SOCKET_ERROR) {
+        fwprintf(stderr, L"shellhelp: bind/listen failed (%d)\n", WSAGetLastError());
+        closesocket(ls);
+        WSACleanup();
+        pClose(hpc);
+        return 1;
+    }
+    int laddrLen = sizeof(laddr);
+    getsockname(ls, (sockaddr*)&laddr, &laddrLen);
+    ctx.listenSock = ls;
+    ctx.listenPort = ntohs(laddr.sin_port);
+    printf("shellhelp.pty.port=%d\n", ctx.listenPort);
     fflush(stdout);
 
     HANDLE thOut = (HANDLE)_beginthreadex(NULL, 0, pump_out, &ctx, 0, NULL);
@@ -811,6 +913,11 @@ static int verb_pty(int argc, wchar_t** argv) {
     InterlockedExchange(&ctx.running, 0);
     pClose(hpc);  // signals EOF on outputRead → output pump returns
 
+    // Close the listener so any accept() blocking in pump_in returns
+    // INVALID_SOCKET and the thread observes !running and exits.
+    closesocket(ctx.listenSock);
+    ctx.listenSock = INVALID_SOCKET;
+
     // Give the output pump a brief window to flush trailing bytes; if
     // it's stuck the parent process exit will reap it anyway.
     WaitForSingleObject(thOut, 250);
@@ -821,6 +928,7 @@ static int verb_pty(int argc, wchar_t** argv) {
     CloseHandle(outputRead);
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
+    WSACleanup();
 
     // Sentinel JS scans for to detect normal exit + capture child's code.
     printf("\nshellhelp.pty.exit=%lu\n", (unsigned long)exitCode);
