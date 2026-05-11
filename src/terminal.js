@@ -34,6 +34,39 @@ const PTY_CTL_PREFIX = '\x1b]SE_CTL;';
 const PTY_CTL_TERM = '\x07';
 const HELPER_PATH = 'extras\\shellhelp.exe';
 
+// `Neutralino.os.updateSpawnedProcess(..., 'stdIn', ...)` is broken on
+// Windows (upstream issue #1297: writes resolve success but bytes never
+// reach the child, because Neutralino wraps every Windows spawn in
+// `cmd.exe /c "..."` and the wrapping cmd owns the pipe). We sidestep
+// it: the helper exposes a per-instance named pipe and announces its
+// name on stdout with this prefix; we open the pipe via
+// `filesystem.appendFile` for each keystroke / control message.
+const PIPE_SENTINEL_RE = /shellhelp\.pty\.pipe=([^\r\n]+)\r?\n/;
+
+// Per-tab append-file queue. Serializes writes so a burst of onData
+// events from xterm.js can't open the single-instance pipe
+// concurrently and hit ERROR_PIPE_BUSY. Each write also retries a few
+// times in case the helper is between accept loops.
+function writeToPipe(tab, data) {
+  const next = (tab.writeQueue || Promise.resolve()).then(async () => {
+    if (!tab.pipePath) return;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        await window.Neutralino.filesystem.appendFile(tab.pipePath, data);
+        return;
+      } catch (e) {
+        if (attempt === 4) {
+          console.warn('[term] pipe write failed:', e);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 5 * (attempt + 1)));
+      }
+    }
+  });
+  tab.writeQueue = next.catch(() => {});
+  return next;
+}
+
 // Per-tab runtime state. Tabs are
 //   { id, shell, cwd, term, fit, proc, handlerOff, missing? }
 // `focusOnRender` is a one-shot flag honored once and cleared. Set when
@@ -121,6 +154,7 @@ export async function newTerminal(cwd) {
     shell, cwd: cwd || '',
     term: made.term, fit: made.fit,
     proc: null, handlerOff: null,
+    pipePath: null, pipeBuf: '', writeQueue: null,
   };
 
   // Build the helper command line. Quote each arg so paths with spaces
@@ -137,29 +171,52 @@ export async function newTerminal(cwd) {
     tab.handlerOff = N.events.on('spawnedProcess', (e) => {
       if (e.detail?.id !== proc.id) return;
       const { action, data } = e.detail;
-      console.debug('[term] proc evt', action, typeof data === 'string' ? data.length : data);
       if (action === 'stdOut' || action === 'stdErr') {
-        // xterm.js parses ANSI + escape sequences itself.
-        if (typeof data === 'string') tab.term.write(data);
+        if (typeof data !== 'string') return;
+        // Pre-sentinel: hold output back so the pipe-announcement line
+        // doesn't render in xterm and so we don't try to write
+        // keystrokes before the helper has the pipe up.
+        if (!tab.pipePath) {
+          tab.pipeBuf += data;
+          const m = tab.pipeBuf.match(PIPE_SENTINEL_RE);
+          if (m) {
+            tab.pipePath = m[1];
+            const before = tab.pipeBuf.slice(0, m.index);
+            const after = tab.pipeBuf.slice(m.index + m[0].length);
+            tab.pipeBuf = '';
+            if (before) tab.term.write(before);
+            if (after) tab.term.write(after);
+            console.debug('[term] pipe ready:', tab.pipePath);
+          }
+          return;
+        }
+        tab.term.write(data);
       } else if (action === 'exit') {
+        // Flush whatever we held back so users see helper diagnostics
+        // before the exit line, even if the sentinel never arrived.
+        if (tab.pipeBuf) { tab.term.write(tab.pipeBuf); tab.pipeBuf = ''; }
         tab.term.write(`\r\n[helper exited ${data}]\r\n`);
         tab.proc = null;
       }
     });
 
-    // PTY input: forward every keystroke / paste chunk to the helper.
+    // PTY input: forward every keystroke / paste chunk to the helper
+    // over the named pipe announced via the stdOut sentinel above.
     tab.term.onData((d) => {
-      console.debug('[term] onData', JSON.stringify(d), 'proc=', tab.proc?.id);
-      if (!tab.proc) return;
-      try {
-        const r = N.os.updateSpawnedProcess(tab.proc.id, 'stdIn', d);
-        if (r && typeof r.then === 'function') {
-          r.catch((err) => console.warn('[term] stdIn failed:', err));
-        }
-      } catch (e) {
-        console.warn('[term] stdIn threw:', e);
-      }
+      if (!tab.proc || !tab.pipePath) return;
+      writeToPipe(tab, d);
     });
+
+    // Belt-and-braces: if the sentinel never lands within a second,
+    // release the buffered output so users can at least see the prompt
+    // (input still won't work — that points at a helper that's too
+    // old or a build mismatch, which the log line below signals).
+    setTimeout(() => {
+      if (!tab.pipePath && tab.proc) {
+        console.warn('[term] no pipe sentinel after 1s; flushing buffered output');
+        if (tab.pipeBuf) { tab.term.write(tab.pipeBuf); tab.pipeBuf = ''; }
+      }
+    }, 1000);
     console.debug('[term] new helper proc id=', proc.id, 'shell=', shell, 'cwd=', tab.cwd);
   } catch (e) {
     tab.term.write(`[failed to spawn helper: ${e?.message || e}]\r\n`);
@@ -192,12 +249,11 @@ export async function switchTerminal(idx) {
 }
 
 function sendResize(tab) {
-  if (!tab?.proc || !tab.term) return;
+  if (!tab?.pipePath || !tab.term) return;
   const cols = tab.term.cols, rows = tab.term.rows;
   if (!cols || !rows) return;
   const msg = `${PTY_CTL_PREFIX}resize;${cols};${rows}${PTY_CTL_TERM}`;
-  try { window.Neutralino.os.updateSpawnedProcess(tab.proc.id, 'stdIn', msg); }
-  catch {}
+  writeToPipe(tab, msg);
 }
 
 export function renderTerminal(container, { onClose, onNewTab, panePath }) {

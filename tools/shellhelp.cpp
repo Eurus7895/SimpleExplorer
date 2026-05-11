@@ -525,6 +525,14 @@ struct PtyCtx {
     HPCON  hpc;
     PFN_ResizePseudoConsole pResize;
     volatile LONG running;
+    // Named pipe the JS side opens to deliver keystrokes + control
+    // messages. Neutralino's `os.updateSpawnedProcess(..., 'stdIn', ...)`
+    // is broken on Windows (upstream issue #1297: writes succeed but
+    // bytes never reach the child, because every Windows spawn is
+    // wrapped in `cmd.exe /c "..."` and the wrapping cmd owns the
+    // pipe), so we bypass it with a server-side named pipe here and
+    // a `Neutralino.filesystem.appendFile` client in src/terminal.js.
+    wchar_t pipeName[64]; // \\.\pipe\shellhelp-pty-<pid>
 };
 
 // Thread: read PTY output → write to our stdout. xterm.js renders bytes
@@ -571,16 +579,23 @@ static void apply_control(PtyCtx* c, const char* payload, size_t n) {
     }
 }
 
-// Thread: read our stdin → write to PTY input, intercepting OSC-framed
-// control messages. The state machine has three states:
+// Thread: server-side of the input named pipe. Each iteration creates
+// a fresh single-instance pipe, accepts one client connection, drains
+// it until EOF, then loops. JS (Neutralino.filesystem.appendFile) does
+// open-write-close per keystroke / control message, so the loop runs
+// once per chunk. The byte stream is processed exactly like the old
+// stdin pump used to be — control-message state machine, then write
+// passthrough bytes to the PTY input pipe.
+//
+// State machine (unchanged from the previous stdin-pump):
 //   0 — passthrough; on ESC, switch to 1 and stash it
 //   1 — saw ESC; on ']', match prefix; otherwise flush ESC + this byte
 //   2 — capturing payload until BEL; on BEL, dispatch and return to 0
+//
+// The state lives ACROSS pipe instances so a control message that
+// straddles two writes still reassembles correctly.
 static unsigned __stdcall pump_in(void* arg) {
     PtyCtx* c = (PtyCtx*)arg;
-    HANDLE inOurs = GetStdHandle(STD_INPUT_HANDLE);
-    char buf[4096];
-    DWORD n = 0;
 
     int state = 0;             // 0 normal, 1 saw-ESC, 2 capturing payload
     size_t prefixMatched = 0;  // bytes of PTY_CTL_PREFIX matched after ESC
@@ -588,63 +603,91 @@ static unsigned __stdcall pump_in(void* arg) {
     size_t payloadLen = 0;
 
     while (InterlockedCompareExchange(&c->running, 0, 0)) {
-        if (!ReadFile(inOurs, buf, sizeof(buf), &n, NULL) || n == 0) break;
-        // Output buffer for PTY-bound bytes; flushed in chunks.
-        char out[4096];
-        size_t outLen = 0;
-        for (DWORD i = 0; i < n; ++i) {
-            char b = buf[i];
-            if (state == 0) {
-                if (b == '\x1b') { state = 1; prefixMatched = 1; }
-                else { out[outLen++] = b; }
-            } else if (state == 1) {
-                // PTY_CTL_PREFIX[0] is ESC, already matched. Compare next.
-                if (prefixMatched < PTY_CTL_PREFIX_N &&
-                    b == PTY_CTL_PREFIX[prefixMatched]) {
-                    prefixMatched++;
-                    if (prefixMatched == PTY_CTL_PREFIX_N) {
-                        state = 2;
+        HANDLE pipe = CreateNamedPipeW(
+            c->pipeName,
+            PIPE_ACCESS_INBOUND,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+            1,              // one instance at a time; JS retries on busy
+            0, 64 * 1024,   // no outbound buffer; 64K inbound
+            0, NULL);
+        if (pipe == INVALID_HANDLE_VALUE) {
+            Sleep(10);
+            continue;
+        }
+        // ConnectNamedPipe blocks until a client opens the path. A
+        // client that opens between CreateNamedPipe and ConnectNamedPipe
+        // returns ERROR_PIPE_CONNECTED instead of FALSE — treat that as
+        // success.
+        if (!ConnectNamedPipe(pipe, NULL) &&
+            GetLastError() != ERROR_PIPE_CONNECTED) {
+            CloseHandle(pipe);
+            continue;
+        }
+
+        char buf[4096];
+        DWORD n = 0;
+        while (InterlockedCompareExchange(&c->running, 0, 0)) {
+            if (!ReadFile(pipe, buf, sizeof(buf), &n, NULL) || n == 0) break;
+            char out[4096];
+            size_t outLen = 0;
+            for (DWORD i = 0; i < n; ++i) {
+                char b = buf[i];
+                if (state == 0) {
+                    if (b == '\x1b') { state = 1; prefixMatched = 1; }
+                    else { out[outLen++] = b; }
+                } else if (state == 1) {
+                    if (prefixMatched < PTY_CTL_PREFIX_N &&
+                        b == PTY_CTL_PREFIX[prefixMatched]) {
+                        prefixMatched++;
+                        if (prefixMatched == PTY_CTL_PREFIX_N) {
+                            state = 2;
+                            payloadLen = 0;
+                        }
+                    } else {
+                        for (size_t k = 0; k < prefixMatched; ++k) {
+                            out[outLen++] = PTY_CTL_PREFIX[k];
+                        }
+                        state = 0;
+                        prefixMatched = 0;
+                        --i;
+                    }
+                } else {  // state == 2
+                    if (b == PTY_CTL_TERM) {
+                        apply_control(c, payload, payloadLen);
+                        state = 0;
+                        prefixMatched = 0;
+                        payloadLen = 0;
+                    } else if (payloadLen < sizeof(payload) - 1) {
+                        payload[payloadLen++] = b;
+                    } else {
+                        state = 0;
+                        prefixMatched = 0;
                         payloadLen = 0;
                     }
-                } else {
-                    // Not a control sequence; flush what we held back and
-                    // re-process this byte in state 0.
-                    for (size_t k = 0; k < prefixMatched; ++k) {
-                        out[outLen++] = PTY_CTL_PREFIX[k];
+                }
+            }
+            if (outLen > 0) {
+                DWORD written = 0;
+                const char* p = out;
+                size_t remaining = outLen;
+                while (remaining > 0) {
+                    if (!WriteFile(c->inputWrite, p, (DWORD)remaining, &written, NULL) ||
+                        written == 0) {
+                        // PTY input pipe is gone — shell is dying. Drop
+                        // the pipe and exit the pump; process tear-down
+                        // will handle the rest.
+                        DisconnectNamedPipe(pipe);
+                        CloseHandle(pipe);
+                        return 0;
                     }
-                    state = 0;
-                    prefixMatched = 0;
-                    --i;  // re-examine current byte
-                }
-            } else {  // state == 2
-                if (b == PTY_CTL_TERM) {
-                    apply_control(c, payload, payloadLen);
-                    state = 0;
-                    prefixMatched = 0;
-                    payloadLen = 0;
-                } else if (payloadLen < sizeof(payload) - 1) {
-                    payload[payloadLen++] = b;
-                } else {
-                    // Overflow — abandon capture, drop payload.
-                    state = 0;
-                    prefixMatched = 0;
-                    payloadLen = 0;
+                    p += written;
+                    remaining -= written;
                 }
             }
         }
-        if (outLen > 0) {
-            DWORD written = 0;
-            const char* p = out;
-            size_t remaining = outLen;
-            while (remaining > 0) {
-                if (!WriteFile(c->inputWrite, p, (DWORD)remaining, &written, NULL) ||
-                    written == 0) {
-                    return 0;
-                }
-                p += written;
-                remaining -= written;
-            }
-        }
+
+        DisconnectNamedPipe(pipe);
+        CloseHandle(pipe);
     }
     return 0;
 }
@@ -742,6 +785,18 @@ static int verb_pty(int argc, wchar_t** argv) {
     ctx.hpc = hpc;
     ctx.pResize = pResize;
     InterlockedExchange(&ctx.running, 1);
+
+    // Build the input pipe name (PID-unique so multiple terminals
+    // coexist) and announce it to JS via stdout before any PTY output
+    // can interleave. src/terminal.js buffers stdOut, scans for this
+    // sentinel, strips the line from xterm output, and opens the path
+    // via Neutralino.filesystem.appendFile for every keystroke.
+    swprintf_s(ctx.pipeName, _countof(ctx.pipeName),
+               L"\\\\.\\pipe\\shellhelp-pty-%lu",
+               GetCurrentProcessId());
+    printf("shellhelp.pty.pipe=\\\\.\\pipe\\shellhelp-pty-%lu\n",
+           (unsigned long)GetCurrentProcessId());
+    fflush(stdout);
 
     HANDLE thOut = (HANDLE)_beginthreadex(NULL, 0, pump_out, &ctx, 0, NULL);
     HANDLE thIn  = (HANDLE)_beginthreadex(NULL, 0, pump_in,  &ctx, 0, NULL);
