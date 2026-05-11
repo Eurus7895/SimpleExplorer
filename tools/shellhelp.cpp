@@ -610,15 +610,26 @@ static bool feed_pty_input(PtyCtx* c, const char* buf, int n,
         DWORD written = 0;
         const char* p = out;
         size_t remaining = outLen;
+        size_t total = outLen;
         while (remaining > 0) {
             if (!WriteFile(c->inputWrite, p, (DWORD)remaining, &written, NULL) ||
                 written == 0) {
+                fprintf(stderr, "[shellhelp] pty write FAIL at %zu/%zu (err=%lu)\n",
+                        total - remaining, total, GetLastError());
+                fflush(stderr);
                 outLen = 0;
                 return false;
             }
             p += written;
             remaining -= written;
         }
+        // Probe: each successful PTY-input write. Pair with the
+        // "tcp rx cl=N" line above to verify the byte made it from
+        // socket → ConPTY input pipe. If this line fires per keystroke
+        // and no shell echo follows, the failure is in ConPTY or cmd.exe
+        // (not the helper).
+        fprintf(stderr, "[shellhelp] pty write %zu\n", total);
+        fflush(stderr);
         outLen = 0;
         return true;
     };
@@ -908,6 +919,23 @@ static int verb_pty(int argc, wchar_t** argv) {
 
     HANDLE thOut = (HANDLE)_beginthreadex(NULL, 0, pump_out, &ctx, 0, NULL);
     HANDLE thIn  = (HANDLE)_beginthreadex(NULL, 0, pump_in,  &ctx, 0, NULL);
+
+    // Self-test injection: write a known command directly to inputWrite
+    // ~500 ms after startup, bypassing the TCP path entirely. If we see
+    // `__shellhelp_selftest__` echo + its "not recognized" output in
+    // xterm, the helper→ConPTY→cmd.exe input chain works end-to-end and
+    // the failure mode is somewhere on the JS-side keystroke path
+    // (xterm onData → fetch → accept → feed_pty_input). If we DON'T
+    // see it, the PTY input wiring itself is broken and JS-side fixes
+    // cannot help.
+    Sleep(500);
+    const char* probe = "echo __shellhelp_selftest__\r";
+    DWORD probeWritten = 0;
+    BOOL probeOk = WriteFile(ctx.inputWrite, probe,
+                             (DWORD)strlen(probe), &probeWritten, NULL);
+    fprintf(stderr, "[shellhelp] selftest write ok=%d n=%lu err=%lu\n",
+            (int)probeOk, probeWritten, probeOk ? 0ul : GetLastError());
+    fflush(stderr);
 
     // Wait for the shell to exit, then tear down. The output pump will
     // drain on EOF; the input pump may still be blocked on ReadFile and
