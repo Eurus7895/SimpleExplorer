@@ -196,6 +196,8 @@ export async function newTerminal(cwd) {
           }
           return;
         }
+        console.debug('[term]', action, 'rx', data.length, 'bytes:',
+                      JSON.stringify(data.slice(0, 80)));
         tab.term.write(data);
       } else if (action === 'exit') {
         // Flush whatever we held back so users see helper diagnostics

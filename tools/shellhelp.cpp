@@ -732,6 +732,12 @@ static unsigned __stdcall pump_in(void* arg) {
         // Body bytes already buffered with the headers.
         int inHdr = hdrLen - bodyStart;
         if (inHdr > contentLength) inHdr = contentLength;
+        // Probe: confirm receipt over TCP. Goes to stderr → Neutralino's
+        // stdErr action → JS handler logs the chunk and writes it into
+        // xterm, so the helper self-reports without needing a rebuild to
+        // read.
+        fprintf(stderr, "[shellhelp] tcp rx cl=%d\n", contentLength);
+        fflush(stderr);
         bool ok = true;
         if (inHdr > 0) {
             ok = feed_pty_input(c, hdr + bodyStart, inHdr,
