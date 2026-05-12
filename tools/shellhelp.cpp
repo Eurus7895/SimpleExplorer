@@ -829,9 +829,19 @@ static int verb_pty(int argc, wchar_t** argv) {
                  (unsigned long)hr);
         return 1;
     }
-    // The PTY now owns the slave-side handles.
-    CloseHandle(inputRead);
-    CloseHandle(outputWrite);
+    // Microsoft's ConPTY sample closes the PTY-side ends here, claiming
+    // ConHost duplicates them. On Windows 11 build 26100 under our
+    // Neutralino spawn (which wraps every Windows spawn in `cmd.exe /c`,
+    // creating a nested console context), closing inputRead silently
+    // breaks the input direction: WriteFile to inputWrite returns
+    // success but the bytes never reach the spawned shell, and a
+    // self-test `echo` injected directly into inputWrite produces no
+    // output. Output works because conhost owns the write end of the
+    // output pipe regardless. Keeping both PTY-end handles open for
+    // the lifetime of the helper costs two HANDLEs and unblocks
+    // ConPTY input; the OS reclaims them when the helper exits.
+    (void)inputRead;
+    (void)outputWrite;
 
     // Set up STARTUPINFOEX with the PTY attribute, then CreateProcess.
     SIZE_T attrSize = 0;
