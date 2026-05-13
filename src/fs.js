@@ -287,7 +287,26 @@ export async function listDir(path) {
   try {
     entries = await N.filesystem.readDirectory(path);
   } catch (e) {
-    console.warn('readDirectory failed:', path, e);
+    // Windows scatters legacy reparse-point junctions across every
+    // user profile (`Application Data`, `Cookies`, `My Documents`,
+    // `Start Menu`, `Recent`, …) and the AppData tree
+    // (`Local/History`, `Local/Temporary Internet Files`, …). Their
+    // DACL denies list-folder so XP→Vista profile-upgrade tools
+    // can't loop forever; Explorer hides them. We see them through
+    // `readDirectory` and fail to enumerate with `NE_FS_NOPATHE`
+    // (permission denied) or `NE_RT_NATRTER` (e.g. WindowsApps,
+    // protected by TrustedInstaller). Same story for any folder
+    // genuinely denied to the user — surfacing these as `console.warn`
+    // floods the dev console on every tree expansion of the home
+    // folder. Drop to `console.debug` for the known-noisy codes so
+    // they're still inspectable when wanted but don't crowd out
+    // signal; keep `warn` for anything else.
+    const code = e?.code;
+    if (code === 'NE_FS_NOPATHE' || code === 'NE_RT_NATRTER') {
+      console.debug('readDirectory skipped:', path, code);
+    } else {
+      console.warn('readDirectory failed:', path, e);
+    }
     return [];
   }
   const out = [];
