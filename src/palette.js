@@ -26,6 +26,8 @@ const COMMANDS = [
   { label: 'Open selected',        verb: 'openSelected' },
   { label: 'Open in VS Code',      verb: 'vscode' },
   { label: 'Open in Terminal',     verb: 'terminal' },
+  { label: 'Open in PowerShell',   verb: 'powershell' },
+  { label: 'Open in Cmd',          verb: 'cmd' },
   { label: 'Show in Explorer',     verb: 'reveal' },
   { label: 'Properties',           verb: 'properties' },
   { label: 'Copy path',            verb: 'copyPath' },

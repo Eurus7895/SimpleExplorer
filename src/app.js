@@ -10,7 +10,6 @@ import { LAYOUT_DEFS, DEFAULT_SPLITS } from './layout.js';
 import { openPalette, isPaletteOpen } from './palette.js';
 import { recursiveSearch } from './search.js';
 import { ensurePreviewPanel, bindPreviewClose, showPreviewFor } from './preview.js';
-import { toggleTerminal } from './terminal.js';
 
 // Boot the Neutralino client. Safe to call before DOM ready; APIs queue until
 // the runtime handshake completes. No-op when running directly in a browser
@@ -151,12 +150,13 @@ function applyActivePane(i) {
     if (card.classList.contains('b-pane')) card.classList.toggle('b-pane--active', isActive);
     if (isActive) activeCard = card;
   });
-  // If the terminal currently owns focus, hand it to the active pane
-  // card so explorer keys (F2 / Del / type-to-jump) start working.
-  // Skip when a rename input is mid-edit -- we don't want to abort it.
+  // Hand keyboard focus to the active pane card so explorer keys
+  // (F2 / Del / type-to-jump) start working without the user having
+  // to click first. Skip when a rename input is mid-edit -- we don't
+  // want to abort it.
   const ae = document.activeElement;
   const isRename = ae && ae.classList && ae.classList.contains('row__rename');
-  if (activeCard && !isRename && (isTerminalFocused() || ae === document.body || ae === null)) {
+  if (activeCard && !isRename && (ae === document.body || ae === null)) {
     activeCard.focus?.({ preventScroll: true });
   }
   const oldBar = document.querySelector('.a-statusbar');
@@ -454,6 +454,14 @@ async function doAction(action) {
       await fs.openInTerminal(pane.path);
       break;
     }
+    case 'powershell': {
+      await fs.openInPowerShell(pane.path);
+      break;
+    }
+    case 'cmd': {
+      await fs.openInCmd(pane.path);
+      break;
+    }
     case 'copyPath': {
       const sel = [...pane.selected][0];
       const target = sel ? fs.joinPath(pane.path, sel) : pane.path;
@@ -509,11 +517,6 @@ async function doAction(action) {
       render();
       break;
     }
-    case 'terminalToggle': {
-      toggleTerminal();
-      render();
-      break;
-    }
     case 'tabNew': {
       await tabNew(pane, pane.path);
       saveTabs();
@@ -530,15 +533,6 @@ async function doAction(action) {
   }
 }
 
-// True when the integrated terminal owns keyboard focus. Drives the
-// "explorer vs terminal" zone gate in bindGlobalKeys -- when this is
-// true, only Ctrl+` / Ctrl+K reach the explorer; everything else stays
-// in the terminal input.
-function isTerminalFocused() {
-  const a = document.activeElement;
-  return !!(a && a.closest && a.closest('.term'));
-}
-
 function bindGlobalKeys() {
   document.addEventListener('explorer:action', (e) => doAction(e.detail));
   document.addEventListener('explorer:select-change', (e) => {
@@ -549,28 +543,8 @@ function bindGlobalKeys() {
     const idx = e.detail?.paneIdx ?? activePane;
     pushPreviewForPane(idx);
   });
-  // Click anywhere outside the terminal panel returns keyboard focus to
-  // the explorer side, so explorer shortcuts (F2 / Del / type-to-jump /
-  // Backspace-up) start working again. Without this, focus would stay
-  // trapped in the terminal input after the user clicks a pane row.
-  document.addEventListener('mousedown', (e) => {
-    if (!isTerminalFocused()) return;
-    if (e.target instanceof Element && e.target.closest('.term')) return;
-    document.activeElement?.blur?.();
-  });
   document.addEventListener('keydown', (e) => {
-    // Always-global shortcuts -- these work regardless of which zone
-    // currently owns focus, because they're how the user *switches*
-    // zones in the first place.
-    if ((e.ctrlKey || e.metaKey) && e.key === '`') {
-      // Ctrl+` toggles the integrated terminal in either direction.
-      e.preventDefault();
-      toggleTerminal();
-      render();
-      return;
-    }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
-      // Palette is intentionally cross-zone -- works from terminal too.
       const input = document.querySelector('input.palette-input');
       if (input) {
         e.preventDefault();
@@ -582,12 +556,6 @@ function bindGlobalKeys() {
       }
       return;
     }
-
-    // Below this line: explorer-only. When terminal owns focus, none of
-    // these fire -- the keystrokes belong to the shell input. The user
-    // returns to explorer mode by clicking a pane (mousedown listener
-    // above blurs the terminal) or by toggling the terminal off.
-    if (isTerminalFocused()) return;
 
     if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'P')) {
       // Ctrl+P toggles the right-side preview pane.

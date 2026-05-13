@@ -471,6 +471,31 @@ export async function openInTerminal(path) {
   }
 }
 
+export async function openInPowerShell(path) {
+  if (!N) { console.warn('[mock] powershell', path); return; }
+  // Prefer Windows Terminal hosting PowerShell (modern, themed); fall
+  // back to a bare `powershell.exe` window when wt isn't installed.
+  // `-NoExit` so the prompt stays after `Set-Location`; the working
+  // directory arg ensures the prompt opens already at `path` instead
+  // of the user's profile home.
+  const r = await exec(`where wt.exe`);
+  if (r.exitCode === 0 && r.stdOut.trim()) {
+    await execBg(`wt.exe -d "${path}" powershell.exe -NoExit`);
+  } else {
+    await execBg(`powershell.exe -NoExit -Command "Set-Location -LiteralPath '${path.replace(/'/g, "''")}'"`);
+  }
+}
+
+export async function openInCmd(path) {
+  if (!N) { console.warn('[mock] cmd', path); return; }
+  // Bare cmd.exe at `path`. The Windows-Terminal-hosted path is
+  // identical to openInTerminal's fallback, so we just call it
+  // directly with no wt detection — keeps the user's intent explicit
+  // ("I asked for cmd, give me cmd") instead of silently upgrading
+  // to wt.
+  await execBg(`cmd /K cd /D "${path}"`);
+}
+
 export async function copyPath(path) {
   if (!N) { console.warn('[mock] copy path', path); return; }
   try { await N.clipboard.writeText(path); }

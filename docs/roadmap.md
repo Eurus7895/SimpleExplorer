@@ -5,11 +5,13 @@ state lives in [`design.md`](./design.md); repository conventions live
 in [`../CLAUDE.md`](../CLAUDE.md). This file is the source of truth for
 **what's painted but not wired**, and **what hasn't been started**.
 
-Status as of the Phase 8b branch (`feat/phase-8b-pty-terminal`):
-post-MVP, pre-v1. Phases 1, 1.5, 2, 3, 4, 5, 6a, 6b, 7, and **8b**
-(real PTY-backed terminal via ConPTY + xterm.js) have shipped.
-The Workspace direction has been removed; the remaining
-directions are Fluent (A) and Cmd (B). Remaining Phase 8 work:
+Status: post-MVP, pre-v1. Phases 1, 1.5, 2, 3, 4, 5, 6a, 6b, 7 have
+shipped. **Phase 8b (embedded PTY terminal via ConPTY + xterm.js) was
+reverted** — see the dedicated section below — and replaced with
+three external-launcher actions (Open in Terminal / PowerShell / Cmd)
+that spawn at the active pane's path. The Workspace direction has
+been removed; the remaining directions are Fluent (A) and Cmd (B).
+Remaining Phase 8 work:
 **8a** big-dir listing perf + tree virtualization, **8c**
 copy/move progress + conflict UI + cancellation, **8d**
 selection keyboard ergonomics (Ctrl+A, Shift+arrows), and
@@ -724,11 +726,27 @@ Two related "things slow down on big trees" fixes, batched.
 - Out of scope: lazy-load row stats inside the *tree* (it only
   shows folder names, no size/modified). Just the directory pane.
 
-#### ~~8b — Helper rebuild + ConPTY + xterm.js~~ (shipped)
+#### ~~8b — Helper rebuild + ConPTY + xterm.js~~ (reverted to external launchers)
 
 The promised real terminal upgrade. Phase 7g shipped a
-line-oriented stub that broke for vim / less / top; 8b delivers
-a proper PTY-backed terminal.
+line-oriented stub that broke for vim / less / top; 8b delivered
+a proper PTY-backed terminal — which then turned out to be unusable
+under Neutralino's spawn context on Windows 11 build 26100. After
+extended debugging (multiple console-state resets, focus-event
+suppression, Win32 input-mode encoding, shell swaps) showed that
+`WriteFile` to the PTY input pipe always succeeded and conhost
+always drained the bytes, but no shell — `cmd.exe` or
+`powershell.exe` — ever received them as console input records,
+8b was reverted. The same `extras\shellhelp.exe pty cmd.exe`
+binary worked end-to-end when launched manually from a real
+PowerShell window, isolating the fault to Neutralino's `cmd /c`
+spawn wrapper. With no path to fix that from app code, the embedded
+terminal was removed and replaced with three external-launcher
+actions (`Open in Terminal`, `Open in PowerShell`, `Open in Cmd`)
+in `src/fs.js`. `xterm.js` vendor, `src/terminal.js`, and the
+`pty` verb in `tools/shellhelp.cpp` are all gone.
+
+Original shipped scope, kept for context:
 
 Shipped on `feat/phase-8b-pty-terminal`:
 
