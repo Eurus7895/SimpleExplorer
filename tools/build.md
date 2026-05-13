@@ -45,16 +45,20 @@ From a Developer Command Prompt:
 ```
 cd tools
 cl /nologo /EHsc /O2 /utf-8 shellhelp.cpp ^
-   /link shell32.lib ole32.lib user32.lib gdi32.lib windowscodecs.lib
+   /link shell32.lib ole32.lib user32.lib gdi32.lib windowscodecs.lib ws2_32.lib
 ```
 
 (`user32.lib` is needed for the menu-walking calls — `GetMenuItemCount`,
 `GetMenuItemInfoW`, `CreatePopupMenu` — used by the `menu` / `invoke` verbs.
 `gdi32.lib` + `windowscodecs.lib` are added in Phase 7e for the `thumb`
 verb's `IShellItemImageFactory::GetImage` and WIC PNG encoder.
+`ws2_32.lib` is added for the `pty` verb's loopback TCP listener — JS posts
+keystrokes there instead of relying on Neutralino's broken Windows stdin
+plumbing. `shellhelp.cpp` also carries `#pragma comment(lib, "ws2_32.lib")`
+so the dependency is self-describing even outside this command line.
 
-The Phase 8b `pty` verb adds no new linker dependencies — `CreatePseudoConsole`
-/ `ResizePseudoConsole` / `ClosePseudoConsole` ship in `kernel32` (already
+The Phase 8b `pty` verb's other dependencies — `CreatePseudoConsole` /
+`ResizePseudoConsole` / `ClosePseudoConsole` — ship in `kernel32` (already
 linked by default) and are resolved at runtime via `GetProcAddress` so the
 binary still loads on Windows < 1809 and returns exit code 3 cleanly.
 `_beginthreadex` is in the C runtime, also already linked.)

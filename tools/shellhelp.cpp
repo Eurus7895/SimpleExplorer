@@ -21,6 +21,10 @@
 //   shellhelp dragout <path> [<path> ...]   — start CF_HDROP DoDragDrop; print effect
 //   shellhelp pty <shell> [<cwd>]           — spawn shell under ConPTY, pump bytes
 
+// winsock2 must precede windows.h so the older winsock.h doesn't get
+// pulled in by windows.h and collide with WSA types.
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <shlobj.h>
 #include <shobjidl.h>
@@ -32,6 +36,8 @@
 #include <wchar.h>
 #include <string.h>
 #include <stdlib.h>
+
+#pragma comment(lib, "ws2_32.lib")
 
 // ID range for QueryContextMenu. 1-based — id 0 means "no command".
 #define CTX_ID_MIN  1
@@ -525,6 +531,17 @@ struct PtyCtx {
     HPCON  hpc;
     PFN_ResizePseudoConsole pResize;
     volatile LONG running;
+    // Loopback TCP listener the JS side hits with one HTTP POST per
+    // keystroke / control message. Replaces the previous named-pipe
+    // approach: Neutralino's filesystem.appendFile resolved success
+    // without delivering bytes to `\\.\pipe\…` paths on Windows
+    // (std::ofstream with mode "ab" opens the path via the CRT, which
+    // doesn't recognize the pipe namespace and silently failed). The
+    // root cause one layer up — os.updateSpawnedProcess('stdIn', …) is
+    // broken because Neutralino wraps every spawn in `cmd.exe /c` —
+    // is still the reason we can't use stdin. TCP sidesteps both.
+    SOCKET listenSock;
+    int    listenPort;
 };
 
 // Thread: read PTY output → write to our stdout. xterm.js renders bytes
@@ -571,79 +588,198 @@ static void apply_control(PtyCtx* c, const char* payload, size_t n) {
     }
 }
 
-// Thread: read our stdin → write to PTY input, intercepting OSC-framed
-// control messages. The state machine has three states:
+// Feed a chunk of bytes from a POST body through the OSC-framed control
+// state machine, dispatching control messages and writing passthrough
+// bytes to the PTY input pipe. State is owned by the caller so a
+// control message that straddles two POSTs still reassembles.
+//
+// State machine:
 //   0 — passthrough; on ESC, switch to 1 and stash it
 //   1 — saw ESC; on ']', match prefix; otherwise flush ESC + this byte
 //   2 — capturing payload until BEL; on BEL, dispatch and return to 0
+//
+// Returns false if writing to the PTY input pipe fails (shell dying).
+static bool feed_pty_input(PtyCtx* c, const char* buf, int n,
+                           int* state, size_t* prefixMatched,
+                           char* payload, size_t* payloadLen) {
+    char out[4096];
+    size_t outLen = 0;
+
+    auto flush = [&]() -> bool {
+        if (outLen == 0) return true;
+        DWORD written = 0;
+        const char* p = out;
+        size_t remaining = outLen;
+        size_t total = outLen;
+        while (remaining > 0) {
+            if (!WriteFile(c->inputWrite, p, (DWORD)remaining, &written, NULL) ||
+                written == 0) {
+                fprintf(stderr, "[shellhelp] pty write FAIL at %zu/%zu (err=%lu)\n",
+                        total - remaining, total, GetLastError());
+                fflush(stderr);
+                outLen = 0;
+                return false;
+            }
+            p += written;
+            remaining -= written;
+        }
+        // Probe: each successful PTY-input write. Pair with the
+        // "tcp rx cl=N" line above to verify the byte made it from
+        // socket → ConPTY input pipe. If this line fires per keystroke
+        // and no shell echo follows, the failure is in ConPTY or cmd.exe
+        // (not the helper).
+        fprintf(stderr, "[shellhelp] pty write %zu\n", total);
+        fflush(stderr);
+        outLen = 0;
+        return true;
+    };
+
+    for (int i = 0; i < n; ++i) {
+        char b = buf[i];
+        if (*state == 0) {
+            if (b == '\x1b') { *state = 1; *prefixMatched = 1; }
+            else { out[outLen++] = b; }
+        } else if (*state == 1) {
+            if (*prefixMatched < PTY_CTL_PREFIX_N &&
+                b == PTY_CTL_PREFIX[*prefixMatched]) {
+                (*prefixMatched)++;
+                if (*prefixMatched == PTY_CTL_PREFIX_N) {
+                    *state = 2;
+                    *payloadLen = 0;
+                }
+            } else {
+                for (size_t k = 0; k < *prefixMatched; ++k) {
+                    out[outLen++] = PTY_CTL_PREFIX[k];
+                }
+                *state = 0;
+                *prefixMatched = 0;
+                --i;
+            }
+        } else {
+            if (b == PTY_CTL_TERM) {
+                apply_control(c, payload, *payloadLen);
+                *state = 0; *prefixMatched = 0; *payloadLen = 0;
+            } else if (*payloadLen < 511) {
+                payload[(*payloadLen)++] = b;
+            } else {
+                *state = 0; *prefixMatched = 0; *payloadLen = 0;
+            }
+        }
+        // Keep `out` from overflowing on large pastes. Headroom of
+        // PTY_CTL_PREFIX_N covers the worst-case "flush stashed prefix"
+        // path that can append several bytes in a single iteration.
+        if (outLen >= sizeof(out) - PTY_CTL_PREFIX_N - 1) {
+            if (!flush()) return false;
+        }
+    }
+    return flush();
+}
+
+// Thread: accept() loop on a 127.0.0.1 TCP listener. Each accepted
+// connection is one HTTP POST whose body is forwarded to the PTY (or
+// parsed as a control message). Replaces the prior named-pipe pump —
+// see the PtyCtx comment for the reason.
+//
+// Why HTTP and not raw bytes: the JS side has to use `fetch` because
+// Neutralino doesn't expose raw sockets. Speaking HTTP back means a
+// simple POST with `Content-Type: text/plain` (the browser default for
+// a string `body`) skips CORS preflight, so we just need to honor
+// Content-Length and respond 204.
 static unsigned __stdcall pump_in(void* arg) {
     PtyCtx* c = (PtyCtx*)arg;
-    HANDLE inOurs = GetStdHandle(STD_INPUT_HANDLE);
-    char buf[4096];
-    DWORD n = 0;
 
-    int state = 0;             // 0 normal, 1 saw-ESC, 2 capturing payload
-    size_t prefixMatched = 0;  // bytes of PTY_CTL_PREFIX matched after ESC
+    int state = 0;
+    size_t prefixMatched = 0;
     char payload[512];
     size_t payloadLen = 0;
 
     while (InterlockedCompareExchange(&c->running, 0, 0)) {
-        if (!ReadFile(inOurs, buf, sizeof(buf), &n, NULL) || n == 0) break;
-        // Output buffer for PTY-bound bytes; flushed in chunks.
-        char out[4096];
-        size_t outLen = 0;
-        for (DWORD i = 0; i < n; ++i) {
-            char b = buf[i];
-            if (state == 0) {
-                if (b == '\x1b') { state = 1; prefixMatched = 1; }
-                else { out[outLen++] = b; }
-            } else if (state == 1) {
-                // PTY_CTL_PREFIX[0] is ESC, already matched. Compare next.
-                if (prefixMatched < PTY_CTL_PREFIX_N &&
-                    b == PTY_CTL_PREFIX[prefixMatched]) {
-                    prefixMatched++;
-                    if (prefixMatched == PTY_CTL_PREFIX_N) {
-                        state = 2;
-                        payloadLen = 0;
-                    }
-                } else {
-                    // Not a control sequence; flush what we held back and
-                    // re-process this byte in state 0.
-                    for (size_t k = 0; k < prefixMatched; ++k) {
-                        out[outLen++] = PTY_CTL_PREFIX[k];
-                    }
-                    state = 0;
-                    prefixMatched = 0;
-                    --i;  // re-examine current byte
+        sockaddr_in caddr;
+        int caddrLen = sizeof(caddr);
+        SOCKET cs = accept(c->listenSock, (sockaddr*)&caddr, &caddrLen);
+        if (cs == INVALID_SOCKET) {
+            // Listener closed (shutdown) or transient error.
+            if (!InterlockedCompareExchange(&c->running, 0, 0)) break;
+            Sleep(5);
+            continue;
+        }
+
+        // Read headers until \r\n\r\n. 8 KiB is plenty for our own client
+        // (browsers send ~300 B of headers for a simple POST).
+        char hdr[8192];
+        int hdrLen = 0;
+        int bodyStart = -1;
+        while (hdrLen < (int)sizeof(hdr) - 1) {
+            int n = recv(cs, hdr + hdrLen, (int)sizeof(hdr) - 1 - hdrLen, 0);
+            if (n <= 0) break;
+            hdrLen += n;
+            for (int i = 0; i + 3 < hdrLen; ++i) {
+                if (hdr[i] == '\r' && hdr[i+1] == '\n' &&
+                    hdr[i+2] == '\r' && hdr[i+3] == '\n') {
+                    bodyStart = i + 4;
+                    break;
                 }
-            } else {  // state == 2
-                if (b == PTY_CTL_TERM) {
-                    apply_control(c, payload, payloadLen);
-                    state = 0;
-                    prefixMatched = 0;
-                    payloadLen = 0;
-                } else if (payloadLen < sizeof(payload) - 1) {
-                    payload[payloadLen++] = b;
-                } else {
-                    // Overflow — abandon capture, drop payload.
-                    state = 0;
-                    prefixMatched = 0;
-                    payloadLen = 0;
-                }
+            }
+            if (bodyStart >= 0) break;
+        }
+        if (bodyStart < 0) { closesocket(cs); continue; }
+
+        // Parse Content-Length out of the header block. Null-terminate at
+        // bodyStart so the case-insensitive scan can't run into body bytes.
+        hdr[bodyStart] = 0;
+        int contentLength = 0;
+        for (int i = 0; i < bodyStart - 15; ++i) {
+            if (_strnicmp(hdr + i, "content-length:", 15) == 0) {
+                int j = i + 15;
+                while (j < bodyStart && (hdr[j] == ' ' || hdr[j] == '\t')) j++;
+                contentLength = atoi(hdr + j);
+                break;
             }
         }
-        if (outLen > 0) {
-            DWORD written = 0;
-            const char* p = out;
-            size_t remaining = outLen;
-            while (remaining > 0) {
-                if (!WriteFile(c->inputWrite, p, (DWORD)remaining, &written, NULL) ||
-                    written == 0) {
-                    return 0;
-                }
-                p += written;
-                remaining -= written;
-            }
+        // Sanity cap: refuse pathological lengths so a malformed header
+        // can't make us read forever.
+        if (contentLength < 0 || contentLength > (1 << 20)) contentLength = 0;
+
+        // Body bytes already buffered with the headers.
+        int inHdr = hdrLen - bodyStart;
+        if (inHdr > contentLength) inHdr = contentLength;
+        // Probe: confirm receipt over TCP. Goes to stderr → Neutralino's
+        // stdErr action → JS handler logs the chunk and writes it into
+        // xterm, so the helper self-reports without needing a rebuild to
+        // read.
+        fprintf(stderr, "[shellhelp] tcp rx cl=%d\n", contentLength);
+        fflush(stderr);
+        bool ok = true;
+        if (inHdr > 0) {
+            ok = feed_pty_input(c, hdr + bodyStart, inHdr,
+                                &state, &prefixMatched, payload, &payloadLen);
+        }
+
+        // Drain the rest off the wire in chunks.
+        char chunk[4096];
+        int remaining = contentLength - inHdr;
+        while (ok && remaining > 0 && InterlockedCompareExchange(&c->running, 0, 0)) {
+            int want = remaining < (int)sizeof(chunk) ? remaining : (int)sizeof(chunk);
+            int got = recv(cs, chunk, want, 0);
+            if (got <= 0) break;
+            ok = feed_pty_input(c, chunk, got,
+                                &state, &prefixMatched, payload, &payloadLen);
+            remaining -= got;
+        }
+
+        const char* resp =
+            "HTTP/1.1 204 No Content\r\n"
+            "Access-Control-Allow-Origin: *\r\n"
+            "Connection: close\r\n"
+            "Content-Length: 0\r\n\r\n";
+        send(cs, resp, (int)strlen(resp), 0);
+        shutdown(cs, SD_SEND);
+        closesocket(cs);
+
+        if (!ok) {
+            // PTY input pipe is gone — shell is dying. Stop accepting;
+            // process tear-down will reap us.
+            return 0;
         }
     }
     return 0;
@@ -693,9 +829,19 @@ static int verb_pty(int argc, wchar_t** argv) {
                  (unsigned long)hr);
         return 1;
     }
-    // The PTY now owns the slave-side handles.
-    CloseHandle(inputRead);
-    CloseHandle(outputWrite);
+    // Microsoft's ConPTY sample closes the PTY-side ends here, claiming
+    // ConHost duplicates them. On Windows 11 build 26100 under our
+    // Neutralino spawn (which wraps every Windows spawn in `cmd.exe /c`,
+    // creating a nested console context), closing inputRead silently
+    // breaks the input direction: WriteFile to inputWrite returns
+    // success but the bytes never reach the spawned shell, and a
+    // self-test `echo` injected directly into inputWrite produces no
+    // output. Output works because conhost owns the write end of the
+    // output pipe regardless. Keeping both PTY-end handles open for
+    // the lifetime of the helper costs two HANDLEs and unblocks
+    // ConPTY input; the OS reclaims them when the helper exits.
+    (void)inputRead;
+    (void)outputWrite;
 
     // Set up STARTUPINFOEX with the PTY attribute, then CreateProcess.
     SIZE_T attrSize = 0;
@@ -741,10 +887,65 @@ static int verb_pty(int argc, wchar_t** argv) {
     ctx.outputRead = outputRead;
     ctx.hpc = hpc;
     ctx.pResize = pResize;
+    ctx.listenSock = INVALID_SOCKET;
     InterlockedExchange(&ctx.running, 1);
+
+    // Bring up a 127.0.0.1 TCP listener on an OS-assigned port, then
+    // announce the port to JS via stdout before any PTY output can
+    // interleave. src/terminal.js buffers stdOut, scans for this
+    // sentinel, strips the line from xterm output, and POSTs each
+    // keystroke / control message to http://127.0.0.1:<port>/.
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+        fwprintf(stderr, L"shellhelp: WSAStartup failed (%d)\n", WSAGetLastError());
+        pClose(hpc);
+        return 1;
+    }
+    SOCKET ls = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (ls == INVALID_SOCKET) {
+        fwprintf(stderr, L"shellhelp: socket failed (%d)\n", WSAGetLastError());
+        WSACleanup();
+        pClose(hpc);
+        return 1;
+    }
+    sockaddr_in laddr = {};
+    laddr.sin_family = AF_INET;
+    laddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    laddr.sin_port = 0;  // OS-assigned, harvested via getsockname below
+    if (bind(ls, (sockaddr*)&laddr, sizeof(laddr)) == SOCKET_ERROR ||
+        listen(ls, 8) == SOCKET_ERROR) {
+        fwprintf(stderr, L"shellhelp: bind/listen failed (%d)\n", WSAGetLastError());
+        closesocket(ls);
+        WSACleanup();
+        pClose(hpc);
+        return 1;
+    }
+    int laddrLen = sizeof(laddr);
+    getsockname(ls, (sockaddr*)&laddr, &laddrLen);
+    ctx.listenSock = ls;
+    ctx.listenPort = ntohs(laddr.sin_port);
+    printf("shellhelp.pty.port=%d\n", ctx.listenPort);
+    fflush(stdout);
 
     HANDLE thOut = (HANDLE)_beginthreadex(NULL, 0, pump_out, &ctx, 0, NULL);
     HANDLE thIn  = (HANDLE)_beginthreadex(NULL, 0, pump_in,  &ctx, 0, NULL);
+
+    // Self-test injection: write a known command directly to inputWrite
+    // ~500 ms after startup, bypassing the TCP path entirely. If we see
+    // `__shellhelp_selftest__` echo + its "not recognized" output in
+    // xterm, the helper→ConPTY→cmd.exe input chain works end-to-end and
+    // the failure mode is somewhere on the JS-side keystroke path
+    // (xterm onData → fetch → accept → feed_pty_input). If we DON'T
+    // see it, the PTY input wiring itself is broken and JS-side fixes
+    // cannot help.
+    Sleep(500);
+    const char* probe = "echo __shellhelp_selftest__\r";
+    DWORD probeWritten = 0;
+    BOOL probeOk = WriteFile(ctx.inputWrite, probe,
+                             (DWORD)strlen(probe), &probeWritten, NULL);
+    fprintf(stderr, "[shellhelp] selftest write ok=%d n=%lu err=%lu\n",
+            (int)probeOk, probeWritten, probeOk ? 0ul : GetLastError());
+    fflush(stderr);
 
     // Wait for the shell to exit, then tear down. The output pump will
     // drain on EOF; the input pump may still be blocked on ReadFile and
@@ -756,6 +957,11 @@ static int verb_pty(int argc, wchar_t** argv) {
     InterlockedExchange(&ctx.running, 0);
     pClose(hpc);  // signals EOF on outputRead → output pump returns
 
+    // Close the listener so any accept() blocking in pump_in returns
+    // INVALID_SOCKET and the thread observes !running and exits.
+    closesocket(ctx.listenSock);
+    ctx.listenSock = INVALID_SOCKET;
+
     // Give the output pump a brief window to flush trailing bytes; if
     // it's stuck the parent process exit will reap it anyway.
     WaitForSingleObject(thOut, 250);
@@ -766,6 +972,7 @@ static int verb_pty(int argc, wchar_t** argv) {
     CloseHandle(outputRead);
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
+    WSACleanup();
 
     // Sentinel JS scans for to detect normal exit + capture child's code.
     printf("\nshellhelp.pty.exit=%lu\n", (unsigned long)exitCode);

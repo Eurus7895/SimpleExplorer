@@ -34,6 +34,45 @@ const PTY_CTL_PREFIX = '\x1b]SE_CTL;';
 const PTY_CTL_TERM = '\x07';
 const HELPER_PATH = 'extras\\shellhelp.exe';
 
+// `Neutralino.os.updateSpawnedProcess(..., 'stdIn', ...)` is broken on
+// Windows (upstream issue #1297: writes resolve success but bytes never
+// reach the child, because Neutralino wraps every Windows spawn in
+// `cmd.exe /c "..."` and the wrapping cmd owns the pipe). An earlier
+// fix tried writing to a server-side named pipe via
+// `filesystem.appendFile`, but that ALSO resolved success without
+// delivering bytes — the CRT's `std::ofstream("ab")` open path doesn't
+// recognize `\\.\pipe\…` and silently fails. The helper now exposes a
+// loopback TCP listener and announces its port via this sentinel; we
+// `fetch` one POST per keystroke.
+const PORT_SENTINEL_RE = /shellhelp\.pty\.port=(\d+)\r?\n/;
+
+// Per-tab write queue. Serializes POSTs so the helper's accept loop
+// doesn't have to fan out, and so log ordering matches the typing
+// order. The fetch itself has connect-level retry built in by the
+// stack, but we add a small backoff loop for the brief window during
+// helper startup before the listener is bound.
+function writeToPipe(tab, data) {
+  const next = (tab.writeQueue || Promise.resolve()).then(async () => {
+    if (!tab.port) return;
+    const url = `http://127.0.0.1:${tab.port}/`;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        await fetch(url, { method: 'POST', body: data });
+        console.debug('[term] tcp write ok', JSON.stringify(data), 'attempt=', attempt);
+        return;
+      } catch (e) {
+        if (attempt === 4) {
+          console.warn('[term] tcp write failed:', e);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 5 * (attempt + 1)));
+      }
+    }
+  });
+  tab.writeQueue = next.catch(() => {});
+  return next;
+}
+
 // Per-tab runtime state. Tabs are
 //   { id, shell, cwd, term, fit, proc, handlerOff, missing? }
 // `focusOnRender` is a one-shot flag honored once and cleared. Set when
@@ -121,6 +160,7 @@ export async function newTerminal(cwd) {
     shell, cwd: cwd || '',
     term: made.term, fit: made.fit,
     proc: null, handlerOff: null,
+    port: null, pipeBuf: '', writeQueue: null,
   };
 
   // Build the helper command line. Quote each arg so paths with spaces
@@ -138,30 +178,54 @@ export async function newTerminal(cwd) {
       if (e.detail?.id !== proc.id) return;
       const { action, data } = e.detail;
       if (action === 'stdOut' || action === 'stdErr') {
-        // xterm.js parses ANSI + escape sequences itself.
-        if (typeof data === 'string') tab.term.write(data);
+        if (typeof data !== 'string') return;
+        // Pre-sentinel: hold output back so the port-announcement line
+        // doesn't render in xterm and so we don't try to POST before
+        // the helper's listener is up.
+        if (!tab.port) {
+          tab.pipeBuf += data;
+          const m = tab.pipeBuf.match(PORT_SENTINEL_RE);
+          if (m) {
+            tab.port = parseInt(m[1], 10);
+            const before = tab.pipeBuf.slice(0, m.index);
+            const after = tab.pipeBuf.slice(m.index + m[0].length);
+            tab.pipeBuf = '';
+            if (before) tab.term.write(before);
+            if (after) tab.term.write(after);
+            console.debug('[term] listener ready on port', tab.port);
+          }
+          return;
+        }
+        console.debug('[term]', action, 'rx', data.length, 'bytes:',
+                      JSON.stringify(data.slice(0, 80)));
+        tab.term.write(data);
       } else if (action === 'exit') {
+        // Flush whatever we held back so users see helper diagnostics
+        // before the exit line, even if the sentinel never arrived.
+        if (tab.pipeBuf) { tab.term.write(tab.pipeBuf); tab.pipeBuf = ''; }
         tab.term.write(`\r\n[helper exited ${data}]\r\n`);
         tab.proc = null;
       }
     });
 
-    // PTY input: forward every keystroke / paste chunk to the helper.
-    // Logs land in DevTools console (Ctrl+Shift+I in the Neutralino
-    // window) so the chain xterm → JS → helper can be diagnosed when
-    // a key seems to "go nowhere".
+    // PTY input: forward every keystroke / paste chunk to the helper
+    // over the loopback TCP listener announced via the stdOut sentinel.
     tab.term.onData((d) => {
-      console.debug('[term] onData', JSON.stringify(d), 'proc=', tab.proc?.id);
-      if (!tab.proc) return;
-      try {
-        const r = N.os.updateSpawnedProcess(tab.proc.id, 'stdIn', d);
-        if (r && typeof r.then === 'function') {
-          r.catch((err) => console.warn('[term] stdIn failed:', err));
-        }
-      } catch (e) {
-        console.warn('[term] stdIn threw:', e);
-      }
+      console.debug('[term] onData', JSON.stringify(d), 'port=', tab.port);
+      if (!tab.proc || !tab.port) return;
+      writeToPipe(tab, d);
     });
+
+    // Belt-and-braces: if the sentinel never lands within a second,
+    // release the buffered output so users can at least see the prompt
+    // (input still won't work — that points at a helper that's too
+    // old or a build mismatch, which the log line below signals).
+    setTimeout(() => {
+      if (!tab.port && tab.proc) {
+        console.warn('[term] no port sentinel after 1s; flushing buffered output');
+        if (tab.pipeBuf) { tab.term.write(tab.pipeBuf); tab.pipeBuf = ''; }
+      }
+    }, 1000);
     console.debug('[term] new helper proc id=', proc.id, 'shell=', shell, 'cwd=', tab.cwd);
   } catch (e) {
     tab.term.write(`[failed to spawn helper: ${e?.message || e}]\r\n`);
@@ -194,12 +258,11 @@ export async function switchTerminal(idx) {
 }
 
 function sendResize(tab) {
-  if (!tab?.proc || !tab.term) return;
+  if (!tab?.port || !tab.term) return;
   const cols = tab.term.cols, rows = tab.term.rows;
   if (!cols || !rows) return;
   const msg = `${PTY_CTL_PREFIX}resize;${cols};${rows}${PTY_CTL_TERM}`;
-  try { window.Neutralino.os.updateSpawnedProcess(tab.proc.id, 'stdIn', msg); }
-  catch {}
+  writeToPipe(tab, msg);
 }
 
 export function renderTerminal(container, { onClose, onNewTab, panePath }) {
