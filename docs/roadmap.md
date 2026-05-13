@@ -746,6 +746,44 @@ actions (`Open in Terminal`, `Open in PowerShell`, `Open in Cmd`)
 in `src/fs.js`. `xterm.js` vendor, `src/terminal.js`, and the
 `pty` verb in `tools/shellhelp.cpp` are all gone.
 
+The replacement surface (`fix/pty-free-console` branch):
+
+- **Four launchers in `src/fs.js`.** `openInTerminal` (auto-detect
+  wt → cmd fallback), `openInPowerShell`, `openInCmd` (no auto
+  upgrade — explicit cmd intent), `openInBash` (Git for Windows
+  bash, wt-hosted when available with `cd …; exec bash`).
+- **Palette entries** in `src/palette.js`: "Open in Terminal" /
+  "Open in PowerShell" / "Open in Cmd" / "Open in Git Bash". Each
+  dispatches the matching action through the existing palette
+  command channel.
+- **Toolbar / rail dropdown.** The terminal icon in the Fluent
+  toolbar and the Cmd direction's rail is a dropdown (via
+  `showShellPickerMenu` in `src/pane.js`, reusing the right-click
+  menu primitives) instead of a one-shot launcher. PowerShell /
+  Command Prompt / Git Bash / "Open in Terminal" — Esc or
+  outside-click dismisses the same way the right-click menu does.
+- **Search no longer blocks the palette.** `runRecursiveSearch`
+  re-renders the pane every 80ms while results stream in.
+  `render()` wipes `#root.innerHTML` and rebuilds the topbar that
+  hosts the palette input, so the palette overlay (which lives on
+  `document.body`) ended up with listeners bound to a detached
+  input — typing did nothing. The scheduler now skips the periodic
+  re-render while `isPaletteOpen()` is true and re-checks every
+  200ms; search keeps streaming into `pane.search.results`, and the
+  final render once the palette closes shows everything.
+- **Quieter `readDirectory` warnings.** Windows scatters
+  `Application Data` / `Cookies` / `My Documents` / `Start Menu`
+  reparse-point junctions across every user profile; their DACL
+  denies list-folder and Neutralino returns `NE_FS_NOPATHE` /
+  `NE_RT_NATRTER`. Those two codes now go to `console.debug`
+  instead of `console.warn` so the dev console isn't flooded on
+  every home-folder expansion — genuine errors still warn.
+- **DevTools off in production.** `modes.window.enableInspector`
+  flipped to `false`. `npm run dev` re-enables it via the runtime
+  CLI override (`neu run -- --window-enable-inspector=true`),
+  `npm run build` and `npm run start` ship without the inspector
+  window.
+
 Original shipped scope, kept for context:
 
 Shipped on `feat/phase-8b-pty-terminal`:
@@ -1003,8 +1041,10 @@ flags.
 - **Streaming format.** Crew's stdout might be plain text or it
   might emit ANSI / token-chunked output. We treat it as plain
   text for v1; if we see escape sequences we cope with them in
-  9c by piping through a tiny ANSI stripper (or accept the noise
-  until Phase 8b's xterm.js lands).
+  9c by piping through a tiny ANSI stripper (the embedded
+  xterm.js path that Phase 8b would have provided was reverted —
+  see the 8b retrospective — so there's no in-process VT
+  renderer to lean on).
 - **Auth on first run.** Crew shows a device-code URL in stderr.
   We display stderr inline so the user can copy the URL — no
   in-app browser flow.

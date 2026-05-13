@@ -114,8 +114,9 @@ Rename are already direct spawns or pure JS — no helper needed.
 ### Terminal launchers (replaces Phase 8b embedded terminal)
 
 SimpleExplorer launches external terminals at the active pane's path
-instead of hosting one in-process. Three actions in the palette
-(`Ctrl+K`) and pane context menu:
+instead of hosting one in-process. Four actions live in the palette
+(`Ctrl+K`), the pane context menu, and the toolbar/rail "Terminal"
+button's dropdown:
 
 - **Open in Terminal** — prefer `wt.exe -d <path>` (Windows Terminal),
   fall back to `cmd /K cd /D <path>` when wt isn't installed.
@@ -123,20 +124,43 @@ instead of hosting one in-process. Three actions in the palette
   fall back to `powershell.exe -NoExit -Command "Set-Location …"`.
 - **Open in Cmd** — `cmd /K cd /D <path>`, no wt detection (explicit
   intent: "I asked for cmd, give me cmd").
+- **Open in Git Bash** — resolves `bash.exe` via `where`, prefers a
+  wt-hosted `bash.exe --login -i -c "cd …; exec bash"` invocation,
+  falls back to bare git-bash when wt isn't installed. Warns in the
+  console when Git for Windows isn't on `PATH`.
 
-The embedded xterm.js + ConPTY integration that Phase 8b shipped was
-removed after an extended debugging session pinned the input direction
-as broken under Neutralino's `cmd /c` spawn wrapper on Windows 11 build
-26100: bytes written to the PTY input pipe were drained by conhost but
-never delivered as console input records to the child shell, regardless
-of console attachment state, focus-event suppression, Win32 input-mode
-encoding, or shell choice (both `cmd.exe` and `powershell.exe` failed
-identically). The manual `extras\shellhelp.exe pty cmd.exe` launch from
-a real PowerShell window worked end-to-end with the same binary, so the
-fault was specific to Neutralino's spawn context — out of our reach
-without forking Neutralino. External launchers ship the same end-user
-value (typing into a shell rooted at the current pane) at a fraction of
-the surface area.
+The toolbar terminal icon is a dropdown trigger (`showShellPickerMenu`
+in `src/pane.js` reuses the right-click menu primitives so the popup
+inherits the same outside-click / Escape dismiss handling). Each entry
+dispatches the matching `'powershell' | 'cmd' | 'bash' | 'terminal'`
+action through the existing `explorer:action` event channel —
+`src/app.js` routes those through `fs.openIn*`. The keyboard route via
+`Ctrl+K` palette stays for users who prefer not to mouse.
+
+The embedded xterm.js + ConPTY integration that Phase 8b originally
+shipped was removed after an extended debugging session pinned the
+input direction as broken under Neutralino's `cmd /c` spawn wrapper on
+Windows 11 build 26100: bytes written to the PTY input pipe were
+drained by conhost but never delivered as console input records to the
+child shell, regardless of console attachment state, focus-event
+suppression, Win32 input-mode encoding, or shell choice (both `cmd.exe`
+and `powershell.exe` failed identically). The manual
+`extras\shellhelp.exe pty cmd.exe` launch from a real PowerShell window
+worked end-to-end with the same binary, so the fault was specific to
+Neutralino's spawn context — out of our reach without forking
+Neutralino. External launchers ship the same end-user value (typing
+into a shell rooted at the current pane) at a fraction of the surface
+area.
+
+### Dev vs production DevTools
+
+`modes.window.enableInspector` in `neutralino.config.json` is `false`,
+so end users running a `npm run build` binary never get a DevTools
+window. `npm run dev` re-enables it via the runtime CLI override
+(`neu run -- --window-enable-inspector=true`) so day-to-day iteration
+keeps the inspector available without permanently flipping the config.
+If a maintainer needs DevTools against a built binary for a one-off
+debug session, the same flag works against the produced exe.
 
 ## Design source of truth (visual)
 
