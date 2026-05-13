@@ -961,6 +961,30 @@ static int verb_pty(int argc, wchar_t** argv) {
             (int)probeOk, probeWritten, probeOk ? 0ul : GetLastError());
     fflush(stderr);
 
+    // Diagnostic: peek the PTY-side read handle 200 ms after the
+    // selftest write to see whether conhost has drained the bytes.
+    // PeekNamedPipe needs GENERIC_READ access on the handle, so we
+    // peek `inputRead` (kept open since PR #15), not `inputWrite`.
+    // Both our handle and conhost's duplicated handle point at the
+    // same pipe object, so the byte count we see here equals what
+    // conhost would see on its next read.
+    //
+    //   avail == 28  → conhost has not read; pipe is full of selftest bytes
+    //   avail == 0   → conhost drained the pipe but cmd never got the
+    //                  console input records (failure is downstream of
+    //                  the pipe, inside conhost's input translator)
+    //   peekOk == 0  → handle invalid / pipe broken (a different bug)
+    Sleep(200);
+    DWORD peekAvail = 0, peekLeft = 0, peekRead = 0;
+    char peekBuf[64];
+    BOOL peekOk = PeekNamedPipe(inputRead, peekBuf, sizeof(peekBuf),
+                                &peekRead, &peekAvail, &peekLeft);
+    fprintf(stderr,
+            "[shellhelp] peek input ok=%d avail=%lu read=%lu err=%lu\n",
+            (int)peekOk, peekAvail, peekRead,
+            peekOk ? 0ul : GetLastError());
+    fflush(stderr);
+
     // Wait for the shell to exit, then tear down. The output pump will
     // drain on EOF; the input pump may still be blocked on ReadFile and
     // is detached — process exit cleans it up.
