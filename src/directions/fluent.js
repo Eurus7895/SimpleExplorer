@@ -98,6 +98,7 @@ function commandBar(ctx) {
       <kbd>Ctrl K</kbd>
     </div>
     <div class="spacer"></div>
+    <button class="iconbtn" data-act="terminal" title="Open in Terminal at the active pane's path">${iconHTML('terminal', 14)}</button>
     <button class="iconbtn ${ctx.previewOpen ? 'on' : ''}" data-act="previewToggle" title="Toggle preview pane (Ctrl+P)">${iconHTML('eye', 14)}</button>
     ${layoutPicker(ctx)}
     <span class="a-sep"></span>

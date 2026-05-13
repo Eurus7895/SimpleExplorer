@@ -337,14 +337,26 @@ function runRecursiveSearch(paneIdx, query) {
   };
   render();
   let pendingRender = false;
+  // Don't render while the palette is open. render() wipes #root and
+  // rebuilds the topbar; that destroys the palette-input the user is
+  // typing into, leaving the overlay's listeners bound to a detached
+  // DOM node. Defer the redraw until the palette closes — the search
+  // keeps streaming results into pane.search.results in the meantime,
+  // so the final render still shows everything found.
+  const safeRender = () => {
+    if (panes[paneIdx]?.search !== pane.search) return;
+    if (isPaletteOpen()) {
+      setTimeout(safeRender, 200);
+      return;
+    }
+    render();
+  };
   const scheduleRender = () => {
     if (pendingRender) return;
     pendingRender = true;
     setTimeout(() => {
       pendingRender = false;
-      // Render only if this is still the active search (handles cancel +
-      // restart races).
-      if (panes[paneIdx]?.search === pane.search) render();
+      safeRender();
     }, 80);
   };
   recursiveSearch({
@@ -359,7 +371,7 @@ function runRecursiveSearch(paneIdx, query) {
     onProgress: (p) => {
       if (panes[paneIdx]?.search !== pane.search) return;
       pane.search.progress = p;
-      if (p.done) render();
+      if (p.done) safeRender();
       else scheduleRender();
     },
   }).catch((e) => console.warn('recursiveSearch failed:', e));

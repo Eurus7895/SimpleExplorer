@@ -112,6 +112,15 @@ function rail(ctx) {
   });
   const spacer = el('div', 'spacer');
   r.appendChild(spacer);
+  const term = el('button', 'b-rail__btn');
+  term.title = 'Open in Terminal at the active pane\'s path';
+  term.innerHTML = `${iconHTML('terminal', 14)}<span class="b-rail__label">Terminal</span>`;
+  term.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const pane = ctx.panes[ctx.activePane];
+    if (pane?.path) fs.openInTerminal(pane.path);
+  });
+  r.appendChild(term);
   const more = el('button', 'b-rail__btn');
   more.innerHTML = `${iconHTML('more', 14)}<span class="b-rail__label">More</span>`;
   r.appendChild(more);
