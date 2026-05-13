@@ -4,7 +4,7 @@
 // Visuals trace explorer-fluent.jsx in the design bundle.
 
 import { iconHTML } from '../icons.js';
-import { renderRows, renderColumnHeader, renderBreadcrumb, getRecent, selectionSizeLabel, renderSearchBanner } from '../pane.js';
+import { renderRows, renderColumnHeader, renderBreadcrumb, getRecent, selectionSizeLabel, renderSearchBanner, showShellPickerMenu } from '../pane.js';
 import { SIDEBAR_FULL } from '../sidebar-data.js';
 import { applyLayout } from '../layout.js';
 import { openPalette, isPaletteOpen } from '../palette.js';
@@ -98,7 +98,7 @@ function commandBar(ctx) {
       <kbd>Ctrl K</kbd>
     </div>
     <div class="spacer"></div>
-    <button class="iconbtn" data-act="terminal" title="Open in Terminal at the active pane's path">${iconHTML('terminal', 14)}</button>
+    <button class="iconbtn" data-shellpicker title="Open a terminal here">${iconHTML('terminal', 14)}</button>
     <button class="iconbtn ${ctx.previewOpen ? 'on' : ''}" data-act="previewToggle" title="Toggle preview pane (Ctrl+P)">${iconHTML('eye', 14)}</button>
     ${layoutPicker(ctx)}
     <span class="a-sep"></span>
@@ -308,6 +308,11 @@ function bindClicks(scope, ctx) {
     el.addEventListener('click', () => ctx.onAction(el.dataset.action)));
   scope.querySelectorAll('[data-dir]').forEach((el) =>
     el.addEventListener('click', () => ctx.setDirection(el.dataset.dir)));
+  scope.querySelectorAll('[data-shellpicker]').forEach((el) =>
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showShellPickerMenu(el.getBoundingClientRect());
+    }));
 }
 
 function bindWinCtl(scope, ctx) {

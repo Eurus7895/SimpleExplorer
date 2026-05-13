@@ -28,6 +28,7 @@ const COMMANDS = [
   { label: 'Open in Terminal',     verb: 'terminal' },
   { label: 'Open in PowerShell',   verb: 'powershell' },
   { label: 'Open in Cmd',          verb: 'cmd' },
+  { label: 'Open in Git Bash',     verb: 'bash' },
   { label: 'Show in Explorer',     verb: 'reveal' },
   { label: 'Properties',           verb: 'properties' },
   { label: 'Copy path',            verb: 'copyPath' },

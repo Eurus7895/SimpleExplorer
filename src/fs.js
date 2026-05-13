@@ -515,6 +515,30 @@ export async function openInCmd(path) {
   await execBg(`cmd /K cd /D "${path}"`);
 }
 
+export async function openInBash(path) {
+  if (!N) { console.warn('[mock] bash', path); return; }
+  // Git for Windows ships `bash.exe`; locate it via `where`. Falls
+  // back to mintty (Git Bash's terminal of choice) when wt isn't
+  // available, since plain `bash.exe` in a cmd console gives a
+  // degraded experience (no colors, no resize, line-input only).
+  // The `-c` form starts an interactive login shell with `cd` to
+  // the target path; `exec bash` keeps the shell alive after `cd`
+  // so the prompt stays open for further commands.
+  const where = await exec(`where bash.exe`);
+  if (where.exitCode !== 0 || !where.stdOut.trim()) {
+    console.warn('openInBash: bash.exe not found in PATH (install Git for Windows)');
+    return;
+  }
+  const bashPath = where.stdOut.split(/\r?\n/)[0].trim();
+  const wt = await exec(`where wt.exe`);
+  const escaped = path.replace(/\\/g, '/').replace(/"/g, '\\"');
+  if (wt.exitCode === 0 && wt.stdOut.trim()) {
+    await execBg(`wt.exe -d "${path}" "${bashPath}" --login -i -c "cd \\"${escaped}\\"; exec bash"`);
+  } else {
+    await execBg(`"${bashPath}" --login -i -c "cd \\"${escaped}\\"; exec bash"`);
+  }
+}
+
 export async function copyPath(path) {
   if (!N) { console.warn('[mock] copy path', path); return; }
   try { await N.clipboard.writeText(path); }

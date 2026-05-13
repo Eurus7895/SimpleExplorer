@@ -474,6 +474,10 @@ async function doAction(action) {
       await fs.openInCmd(pane.path);
       break;
     }
+    case 'bash': {
+      await fs.openInBash(pane.path);
+      break;
+    }
     case 'copyPath': {
       const sel = [...pane.selected][0];
       const target = sel ? fs.joinPath(pane.path, sel) : pane.path;

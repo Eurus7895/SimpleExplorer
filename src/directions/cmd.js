@@ -3,7 +3,7 @@
 // header. Visuals trace explorer-cmd.jsx in the design bundle.
 
 import { iconHTML } from '../icons.js';
-import { renderRows, buildSegPath, selectionSizeLabel, getRecent, renderSearchBanner } from '../pane.js';
+import { renderRows, buildSegPath, selectionSizeLabel, getRecent, renderSearchBanner, showShellPickerMenu } from '../pane.js';
 import { RAIL_ITEMS } from '../sidebar-data.js';
 import { applyLayout } from '../layout.js';
 import { openPalette, closePalette, isPaletteOpen } from '../palette.js';
@@ -113,12 +113,11 @@ function rail(ctx) {
   const spacer = el('div', 'spacer');
   r.appendChild(spacer);
   const term = el('button', 'b-rail__btn');
-  term.title = 'Open in Terminal at the active pane\'s path';
+  term.title = 'Open a terminal here';
   term.innerHTML = `${iconHTML('terminal', 14)}<span class="b-rail__label">Terminal</span>`;
   term.addEventListener('click', (e) => {
     e.stopPropagation();
-    const pane = ctx.panes[ctx.activePane];
-    if (pane?.path) fs.openInTerminal(pane.path);
+    showShellPickerMenu(term.getBoundingClientRect());
   });
   r.appendChild(term);
   const more = el('button', 'b-rail__btn');
