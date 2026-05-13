@@ -46,6 +46,45 @@ const HELPER_PATH = 'extras\\shellhelp.exe';
 // `fetch` one POST per keystroke.
 const PORT_SENTINEL_RE = /shellhelp\.pty\.port=(\d+)\r?\n/;
 
+// Win32 input mode encoder. Conhost emits `\x1b[?9001h` at startup
+// declaring it will use the protocol documented at
+//   learn.microsoft.com/windows/console/console-virtual-terminal-sequences#win32-input-mode
+// Each keystroke is supposed to arrive as
+//   `\x1b[<vkey>;<scan>;<unicode>;<keydown>;<mods>;<repeat>_`
+// On win11 26100 conhost under neutralino's spawn appears to drop
+// raw ascii bytes when the mode is active: peek shows our writes
+// drain out of the input pipe, but cmd never produces a keystroke.
+// Translate the common cases here so we can test whether explicit
+// win32 encoding restores echo. Returns null if `d` isn't a single
+// printable / common-special character we know how to encode — the
+// caller falls back to forwarding the raw bytes.
+function encodeWin32Input(d) {
+  if (typeof d !== 'string' || d.length !== 1) return null;
+  const c = d.charCodeAt(0);
+  let vkey = 0, mods = 0;
+  if (c >= 0x61 && c <= 0x7a) {        // a..z
+    vkey = c - 0x20;
+  } else if (c >= 0x41 && c <= 0x5a) { // A..Z
+    vkey = c;
+    mods = 0x10;                       // SHIFT_PRESSED
+  } else if (c >= 0x30 && c <= 0x39) { // 0..9
+    vkey = c;
+  } else if (c === 0x0d) {             // \r → VK_RETURN
+    vkey = 0x0d;
+  } else if (c === 0x08) {             // BS → VK_BACK
+    vkey = 0x08;
+  } else if (c === 0x09) {             // TAB → VK_TAB
+    vkey = 0x09;
+  } else if (c === 0x20) {             // SPACE → VK_SPACE
+    vkey = 0x20;
+  } else {
+    return null;
+  }
+  const down = `\x1b[${vkey};0;${c};1;${mods};1_`;
+  const up   = `\x1b[${vkey};0;${c};0;${mods};1_`;
+  return down + up;
+}
+
 // Per-tab write queue. Serializes POSTs so the helper's accept loop
 // doesn't have to fan out, and so log ordering matches the typing
 // order. The fetch itself has connect-level retry built in by the
@@ -226,6 +265,12 @@ export async function newTerminal(cwd) {
       if (d === '[I' || d === '[O') {
         console.debug('[term] drop focus event', JSON.stringify(d));
         return;
+      }
+      const encoded = encodeWin32Input(d);
+      if (encoded !== null) {
+        console.debug('[term] win32 encode', JSON.stringify(d),
+                      '->', JSON.stringify(encoded));
+        d = encoded;
       }
       console.debug('[term] onData', JSON.stringify(d), 'port=', tab.port);
       if (!tab.proc || !tab.port) return;
