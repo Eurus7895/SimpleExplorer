@@ -793,32 +793,56 @@ static int verb_pty(int argc, wchar_t** argv) {
     const wchar_t* shell = argv[2];
     const wchar_t* cwd = (argc >= 4) ? argv[3] : NULL;
 
-    // Ensure the helper has a console attachment before creating a
-    // pseudo-console. When launched from PowerShell (or any user-
-    // facing shell) the helper inherits that parent's console and
-    // CreatePseudoConsole wires up cleanly — the manual smoke test
-    // `extras\shellhelp.exe pty cmd.exe` works end-to-end including
-    // the selftest echo. Under Neutralino the helper is spawned
-    // through `cmd.exe /c "..."` with stdin/stdout/stderr replaced
-    // by pipes and (depending on Neutralino's flags) typically with
-    // no console at all. CreatePseudoConsole on Win11 26100 in that
-    // contextless state appears to set up only the output direction;
-    // bytes written to the input pipe never surface as console input
-    // records to the child shell, so cmd never echoes a keystroke.
-    // AllocConsole gives the helper a private console of its own
-    // when one wasn't inherited, restoring the context conhost needs
-    // to wire input correctly. The guard avoids touching the working
-    // case where a real console is already attached.
-    BOOL hadConsole = (GetConsoleWindow() != NULL);
-    BOOL allocOk = TRUE;
-    if (!hadConsole) {
-        allocOk = AllocConsole();
+    // Reset the console context before creating a pseudo-console.
+    //
+    // The DevTools log under neutralino showed:
+    //   console at entry=1 (a console was inherited)
+    //   peek input avail=0 (conhost drained our writes out of the pipe)
+    // — yet cmd still doesn't echo a keystroke. Bytes go into the pipe,
+    // conhost reads them, but cmd never sees them as console input
+    // records. The manual `extras\shellhelp.exe pty cmd.exe` launch
+    // from powershell works end-to-end with the same code and same
+    // binary, so the only material difference is the surrounding
+    // process context — specifically the console attached at entry.
+    //
+    // Under neutralino the helper inherits a console from the
+    // `cmd.exe /c "..."` wrapper neutralino uses to spawn it. That
+    // console runs with neutralino's pipe-redirected stdio and likely
+    // CREATE_NO_WINDOW, which gives it a hidden, oddly-configured
+    // attach state. CreatePseudoConsole in that context wires output
+    // (cmd's banner renders) but not input. FreeConsole drops that
+    // weird inherited attachment; AllocConsole gives us a fresh,
+    // standalone one. SetStdHandle restores the neutralino pipes that
+    // AllocConsole would otherwise reassign to its own CONOUT$, so
+    // our stderr/stdout logging continues to flow back to js.
+    //
+    // Guard: only do the dance when stdout is a pipe. Under a manual
+    // powershell/cmd launch stdout is a console handle (FILE_TYPE_CHAR),
+    // the manual smoke test already works there, and FreeConsole would
+    // close stdout — so we leave that path untouched.
+    HANDLE hOut0 = GetStdHandle(STD_OUTPUT_HANDLE);
+    HANDLE hErr0 = GetStdHandle(STD_ERROR_HANDLE);
+    HANDLE hIn0  = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD  outType = GetFileType(hOut0);
+    BOOL   stdoutIsPipe = (outType == FILE_TYPE_PIPE);
+    BOOL   hadConsole = (GetConsoleWindow() != NULL);
+    BOOL   resetOk = FALSE;
+    if (stdoutIsPipe) {
+        if (hadConsole) FreeConsole();
+        resetOk = AllocConsole();
+        if (resetOk) {
+            SetStdHandle(STD_OUTPUT_HANDLE, hOut0);
+            SetStdHandle(STD_ERROR_HANDLE, hErr0);
+            SetStdHandle(STD_INPUT_HANDLE,  hIn0);
+            HWND cw = GetConsoleWindow();
+            if (cw) ShowWindow(cw, SW_HIDE);
+        }
     }
     fprintf(stderr,
-            "[shellhelp] console at entry=%d alloc=%d after=%d err=%lu\n",
-            (int)hadConsole, (int)allocOk,
-            (int)(GetConsoleWindow() != NULL),
-            hadConsole ? 0ul : (allocOk ? 0ul : GetLastError()));
+            "[shellhelp] reset console outType=%lu stdoutIsPipe=%d "
+            "hadConsole=%d resetOk=%d after=%d\n",
+            outType, (int)stdoutIsPipe, (int)hadConsole,
+            (int)resetOk, (int)(GetConsoleWindow() != NULL));
     fflush(stderr);
 
     // ConPTY symbols live in kernel32 since Win10 1809. Resolve at runtime
