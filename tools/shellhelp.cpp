@@ -793,6 +793,34 @@ static int verb_pty(int argc, wchar_t** argv) {
     const wchar_t* shell = argv[2];
     const wchar_t* cwd = (argc >= 4) ? argv[3] : NULL;
 
+    // Ensure the helper has a console attachment before creating a
+    // pseudo-console. When launched from PowerShell (or any user-
+    // facing shell) the helper inherits that parent's console and
+    // CreatePseudoConsole wires up cleanly — the manual smoke test
+    // `extras\shellhelp.exe pty cmd.exe` works end-to-end including
+    // the selftest echo. Under Neutralino the helper is spawned
+    // through `cmd.exe /c "..."` with stdin/stdout/stderr replaced
+    // by pipes and (depending on Neutralino's flags) typically with
+    // no console at all. CreatePseudoConsole on Win11 26100 in that
+    // contextless state appears to set up only the output direction;
+    // bytes written to the input pipe never surface as console input
+    // records to the child shell, so cmd never echoes a keystroke.
+    // AllocConsole gives the helper a private console of its own
+    // when one wasn't inherited, restoring the context conhost needs
+    // to wire input correctly. The guard avoids touching the working
+    // case where a real console is already attached.
+    BOOL hadConsole = (GetConsoleWindow() != NULL);
+    BOOL allocOk = TRUE;
+    if (!hadConsole) {
+        allocOk = AllocConsole();
+    }
+    fprintf(stderr,
+            "[shellhelp] console at entry=%d alloc=%d after=%d err=%lu\n",
+            (int)hadConsole, (int)allocOk,
+            (int)(GetConsoleWindow() != NULL),
+            hadConsole ? 0ul : (allocOk ? 0ul : GetLastError()));
+    fflush(stderr);
+
     // ConPTY symbols live in kernel32 since Win10 1809. Resolve at runtime
     // so this binary still loads on older Windows; JS falls back to v1.
     HMODULE hk32 = GetModuleHandleW(L"kernel32.dll");
