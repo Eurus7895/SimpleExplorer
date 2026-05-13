@@ -838,12 +838,11 @@ static int verb_pty(int argc, wchar_t** argv) {
             if (cw) ShowWindow(cw, SW_HIDE);
         }
     }
-    fprintf(stderr,
-            "[shellhelp] reset console outType=%lu stdoutIsPipe=%d "
-            "hadConsole=%d resetOk=%d after=%d\n",
-            outType, (int)stdoutIsPipe, (int)hadConsole,
-            (int)resetOk, (int)(GetConsoleWindow() != NULL));
-    fflush(stderr);
+    // Stash the reset-console outcome until after the port sentinel
+    // is announced; otherwise terminal.js holds it in the pre-sentinel
+    // buffer and flushes it into xterm instead of DevTools, so we lose
+    // visibility on the diagnostic.
+    BOOL afterConsole = (GetConsoleWindow() != NULL);
 
     // ConPTY symbols live in kernel32 since Win10 1809. Resolve at runtime
     // so this binary still loads on older Windows; JS falls back to v1.
@@ -978,6 +977,17 @@ static int verb_pty(int argc, wchar_t** argv) {
     ctx.listenPort = ntohs(laddr.sin_port);
     printf("shellhelp.pty.port=%d\n", ctx.listenPort);
     fflush(stdout);
+
+    // Now that the port sentinel is out and the JS-side pre-sentinel
+    // buffer has flipped to live-forwarding mode, emit the deferred
+    // reset-console diagnostic so it shows up in DevTools (not buried
+    // in the buffered chunk that terminal.js writes into xterm).
+    fprintf(stderr,
+            "[shellhelp] reset console outType=%lu stdoutIsPipe=%d "
+            "hadConsole=%d resetOk=%d after=%d\n",
+            outType, (int)stdoutIsPipe, (int)hadConsole,
+            (int)resetOk, (int)afterConsole);
+    fflush(stderr);
 
     HANDLE thOut = (HANDLE)_beginthreadex(NULL, 0, pump_out, &ctx, 0, NULL);
     HANDLE thIn  = (HANDLE)_beginthreadex(NULL, 0, pump_in,  &ctx, 0, NULL);

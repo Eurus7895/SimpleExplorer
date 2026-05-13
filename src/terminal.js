@@ -211,6 +211,22 @@ export async function newTerminal(cwd) {
     // PTY input: forward every keystroke / paste chunk to the helper
     // over the loopback TCP listener announced via the stdOut sentinel.
     tab.term.onData((d) => {
+      // Drop xterm-generated focus events. Conhost enabled focus
+      // tracking via `[?1004h` in its output, so xterm relays
+      // `[I` / `[O` back when the terminal gains or loses
+      // focus. Under Neutralino these sequences appear to nudge
+      // conhost's input VT parser into a state where subsequent
+      // keystrokes never produce console input records for the child
+      // shell — peek shows the bytes get drained from the input pipe,
+      // but cmd never echoes them. The manual `extras\shellhelp.exe
+      // pty cmd.exe` launch from a powershell window doesn't have an
+      // xterm-equivalent on the receiving side, so it never sends
+      // focus events; that's the only material difference. Suppress
+      // them here as a probe.
+      if (d === '[I' || d === '[O') {
+        console.debug('[term] drop focus event', JSON.stringify(d));
+        return;
+      }
       console.debug('[term] onData', JSON.stringify(d), 'port=', tab.port);
       if (!tab.proc || !tab.port) return;
       writeToPipe(tab, d);
