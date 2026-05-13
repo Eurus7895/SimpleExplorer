@@ -793,6 +793,20 @@ static int verb_pty(int argc, wchar_t** argv) {
     const wchar_t* shell = argv[2];
     const wchar_t* cwd = (argc >= 4) ? argv[3] : NULL;
 
+    // Detach from the inherited console before creating a pseudo-console.
+    // Neutralino spawns the helper via `cmd.exe /c "..."`, so we start
+    // life attached to that wrapper's conhost. Calling
+    // CreatePseudoConsole while a real console is attached produces a
+    // half-alive PTY on Win11 26100: output flows out (we see the cmd
+    // banner and prompt), but the input pipe accepts WriteFile bytes
+    // that never surface as console input records to the child shell —
+    // even a direct in-process self-test write to inputWrite produces
+    // no echo. FreeConsole drops the inherited attachment so the new
+    // pseudo-console isn't nested inside another one. stdout/stderr
+    // handles stay valid because Neutralino reads them via pipes, not
+    // via the console.
+    FreeConsole();
+
     // ConPTY symbols live in kernel32 since Win10 1809. Resolve at runtime
     // so this binary still loads on older Windows; JS falls back to v1.
     HMODULE hk32 = GetModuleHandleW(L"kernel32.dll");
