@@ -7,7 +7,7 @@
   "scripts": {
     "start": "powershell -ExecutionPolicy Bypass -File scripts/run.ps1",
     "setup": "neu update",
-    "dev": "neu run",
+    "dev": "neu run -- --window-enable-inspector=true",
     "build": "neu build && node scripts/copy-helper.mjs"
   },
   "devDependencies": {

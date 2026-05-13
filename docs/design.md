@@ -81,7 +81,6 @@ install time, we ship a small MSVC-built binary at `extras/shellhelp.exe`:
 | `invoke <id> <path…>` | `IContextMenu::InvokeCommand` with the chosen verb id | (no equivalent before) |
 | `thumb <size> <path>` | `IShellItemImageFactory::GetImage` → WIC PNG → `%TEMP%` path printed to stdout | kind icons only |
 | `dragout <path…>` | `BHID_DataObject` → `DoDragDrop`; `DROPEFFECT` printed to stdout | (no equivalent before) |
-| `pty <shell> [<cwd>]` | `CreatePseudoConsole` + two-thread byte pump between helper stdin/stdout and the PTY | line-oriented `spawnProcess` (Phase 7g v1) |
 
 The curated SimpleExplorer items (Open in active pane, Copy path, Rename,
 Delete, Show in Explorer, Properties) still live in `src/pane.js` and
@@ -112,35 +111,56 @@ Latency budget after the change:
 Open / Open in VS Code / Open in Terminal / Show in Explorer / Copy path /
 Rename are already direct spawns or pure JS — no helper needed.
 
-### Integrated terminal (Phase 8b)
+### Terminal launchers (replaces Phase 8b embedded terminal)
 
-`src/terminal.js` mounts an [xterm.js](https://xtermjs.org/) Terminal into
-a bottom panel and pipes bytes to `extras/shellhelp.exe pty <shell>`,
-which spawns the chosen shell under a Windows ConPTY. This replaces the
-Phase 7g line-oriented `<pre>` + input stub that couldn't host vim, less,
-top, ssh password prompts, or shell tab-completion.
+SimpleExplorer launches external terminals at the active pane's path
+instead of hosting one in-process. Four actions live in the palette
+(`Ctrl+K`), the pane context menu, and the toolbar/rail "Terminal"
+button's dropdown:
 
-xterm.js is vendored offline at `src/vendor/xterm/` (core 5.5.0 +
-addon-fit 0.10.0 + addon-web-links 0.11.0). Bundle is loaded as plain
-`<script>` tags from `src/index.html`; UMD wrappers attach `Terminal`,
-`FitAddon.FitAddon`, and `WebLinksAddon.WebLinksAddon` to `globalThis`.
-No bundler step.
+- **Open in Terminal** — prefer `wt.exe -d <path>` (Windows Terminal),
+  fall back to `cmd /K cd /D <path>` when wt isn't installed.
+- **Open in PowerShell** — `wt.exe -d <path> powershell.exe -NoExit`,
+  fall back to `powershell.exe -NoExit -Command "Set-Location …"`.
+- **Open in Cmd** — `cmd /K cd /D <path>`, no wt detection (explicit
+  intent: "I asked for cmd, give me cmd").
+- **Open in Git Bash** — resolves `bash.exe` via `where`, prefers a
+  wt-hosted `bash.exe --login -i -c "cd …; exec bash"` invocation,
+  falls back to bare git-bash when wt isn't installed. Warns in the
+  console when Git for Windows isn't on `PATH`.
 
-Resize is plumbed as an out-of-band control sequence on stdin:
-`ESC ] SE_CTL ; resize ; <cols> ; <rows> BEL`. The helper's stdin pump
-intercepts the OSC-framed prefix and calls `ResizePseudoConsole`;
-everything else passes through to the PTY input pipe untouched. The
-sentinel `ESC ] SE_CTL ;` won't be produced by user keystrokes, so
-collision risk is effectively zero. xterm.js triggers a resize via
-`ResizeObserver` on the panel element, coalesced through `requestAnimationFrame`
-so splitter drags don't flood the helper.
+The toolbar terminal icon is a dropdown trigger (`showShellPickerMenu`
+in `src/pane.js` reuses the right-click menu primitives so the popup
+inherits the same outside-click / Escape dismiss handling). Each entry
+dispatches the matching `'powershell' | 'cmd' | 'bash' | 'terminal'`
+action through the existing `explorer:action` event channel —
+`src/app.js` routes those through `fs.openIn*`. The keyboard route via
+`Ctrl+K` palette stays for users who prefer not to mouse.
 
-Helper missing? The panel renders a one-paragraph "build the helper or
-download the CI artifact" message and stays out of the way. We
-deliberately do *not* fall back to the v1 line-oriented stub — that was
-the trap Phase 7g shipped (broken vim, broken password prompts, broken
-tab completion); inheriting it as a fallback would just move the trap
-behind a flag.
+The embedded xterm.js + ConPTY integration that Phase 8b originally
+shipped was removed after an extended debugging session pinned the
+input direction as broken under Neutralino's `cmd /c` spawn wrapper on
+Windows 11 build 26100: bytes written to the PTY input pipe were
+drained by conhost but never delivered as console input records to the
+child shell, regardless of console attachment state, focus-event
+suppression, Win32 input-mode encoding, or shell choice (both `cmd.exe`
+and `powershell.exe` failed identically). The manual
+`extras\shellhelp.exe pty cmd.exe` launch from a real PowerShell window
+worked end-to-end with the same binary, so the fault was specific to
+Neutralino's spawn context — out of our reach without forking
+Neutralino. External launchers ship the same end-user value (typing
+into a shell rooted at the current pane) at a fraction of the surface
+area.
+
+### Dev vs production DevTools
+
+`modes.window.enableInspector` in `neutralino.config.json` is `false`,
+so end users running a `npm run build` binary never get a DevTools
+window. `npm run dev` re-enables it via the runtime CLI override
+(`neu run -- --window-enable-inspector=true`) so day-to-day iteration
+keeps the inspector available without permanently flipping the config.
+If a maintainer needs DevTools against a built binary for a one-off
+debug session, the same flag works against the produced exe.
 
 ## Design source of truth (visual)
 

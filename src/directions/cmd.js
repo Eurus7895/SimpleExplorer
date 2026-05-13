@@ -3,12 +3,11 @@
 // header. Visuals trace explorer-cmd.jsx in the design bundle.
 
 import { iconHTML } from '../icons.js';
-import { renderRows, buildSegPath, selectionSizeLabel, getRecent, renderSearchBanner } from '../pane.js';
+import { renderRows, buildSegPath, selectionSizeLabel, getRecent, renderSearchBanner, showShellPickerMenu } from '../pane.js';
 import { RAIL_ITEMS } from '../sidebar-data.js';
 import { applyLayout } from '../layout.js';
 import { openPalette, closePalette, isPaletteOpen } from '../palette.js';
 import { ensurePreviewPanel, bindPreviewClose, showPreviewFor } from '../preview.js';
-import { renderTerminal, isTerminalOpen, toggleTerminal } from '../terminal.js';
 import * as fs from '../fs.js';
 
 const LAYOUT_OPTS = [
@@ -43,17 +42,6 @@ export function renderCmd(root, ctx) {
     queueMicrotask(() => ctx.pushPreview?.(ctx.activePane));
   }
   app.appendChild(body);
-
-  // Integrated terminal (Phase 7g) — bottom panel, Cmd direction only.
-  if (isTerminalOpen()) {
-    const termWrap = el('div', 'b-term-wrap');
-    const activePane = ctx.panes[ctx.activePane];
-    renderTerminal(termWrap, {
-      onClose: () => { toggleTerminal(); ctx.rerender?.(); },
-      panePath: activePane?.path,
-    });
-    app.appendChild(termWrap);
-  }
 
   root.appendChild(app);
 }
@@ -124,13 +112,12 @@ function rail(ctx) {
   });
   const spacer = el('div', 'spacer');
   r.appendChild(spacer);
-  const term = el('button', 'b-rail__btn' + (isTerminalOpen() ? ' b-rail__btn--active' : ''));
-  term.title = 'Toggle terminal (Ctrl+`)';
+  const term = el('button', 'b-rail__btn');
+  term.title = 'Open a terminal here';
   term.innerHTML = `${iconHTML('terminal', 14)}<span class="b-rail__label">Terminal</span>`;
   term.addEventListener('click', (e) => {
     e.stopPropagation();
-    toggleTerminal();
-    ctx.rerender?.();
+    showShellPickerMenu(term.getBoundingClientRect());
   });
   r.appendChild(term);
   const more = el('button', 'b-rail__btn');

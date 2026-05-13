@@ -287,7 +287,26 @@ export async function listDir(path) {
   try {
     entries = await N.filesystem.readDirectory(path);
   } catch (e) {
-    console.warn('readDirectory failed:', path, e);
+    // Windows scatters legacy reparse-point junctions across every
+    // user profile (`Application Data`, `Cookies`, `My Documents`,
+    // `Start Menu`, `Recent`, …) and the AppData tree
+    // (`Local/History`, `Local/Temporary Internet Files`, …). Their
+    // DACL denies list-folder so XP→Vista profile-upgrade tools
+    // can't loop forever; Explorer hides them. We see them through
+    // `readDirectory` and fail to enumerate with `NE_FS_NOPATHE`
+    // (permission denied) or `NE_RT_NATRTER` (e.g. WindowsApps,
+    // protected by TrustedInstaller). Same story for any folder
+    // genuinely denied to the user — surfacing these as `console.warn`
+    // floods the dev console on every tree expansion of the home
+    // folder. Drop to `console.debug` for the known-noisy codes so
+    // they're still inspectable when wanted but don't crowd out
+    // signal; keep `warn` for anything else.
+    const code = e?.code;
+    if (code === 'NE_FS_NOPATHE' || code === 'NE_RT_NATRTER') {
+      console.debug('readDirectory skipped:', path, code);
+    } else {
+      console.warn('readDirectory failed:', path, e);
+    }
     return [];
   }
   const out = [];
@@ -468,6 +487,55 @@ export async function openInTerminal(path) {
     await execBg(`wt.exe -d "${path}"`);
   } else {
     await execBg(`cmd /K cd /D "${path}"`);
+  }
+}
+
+export async function openInPowerShell(path) {
+  if (!N) { console.warn('[mock] powershell', path); return; }
+  // Prefer Windows Terminal hosting PowerShell (modern, themed); fall
+  // back to a bare `powershell.exe` window when wt isn't installed.
+  // `-NoExit` so the prompt stays after `Set-Location`; the working
+  // directory arg ensures the prompt opens already at `path` instead
+  // of the user's profile home.
+  const r = await exec(`where wt.exe`);
+  if (r.exitCode === 0 && r.stdOut.trim()) {
+    await execBg(`wt.exe -d "${path}" powershell.exe -NoExit`);
+  } else {
+    await execBg(`powershell.exe -NoExit -Command "Set-Location -LiteralPath '${path.replace(/'/g, "''")}'"`);
+  }
+}
+
+export async function openInCmd(path) {
+  if (!N) { console.warn('[mock] cmd', path); return; }
+  // Bare cmd.exe at `path`. The Windows-Terminal-hosted path is
+  // identical to openInTerminal's fallback, so we just call it
+  // directly with no wt detection — keeps the user's intent explicit
+  // ("I asked for cmd, give me cmd") instead of silently upgrading
+  // to wt.
+  await execBg(`cmd /K cd /D "${path}"`);
+}
+
+export async function openInBash(path) {
+  if (!N) { console.warn('[mock] bash', path); return; }
+  // Git for Windows ships `bash.exe`; locate it via `where`. Falls
+  // back to mintty (Git Bash's terminal of choice) when wt isn't
+  // available, since plain `bash.exe` in a cmd console gives a
+  // degraded experience (no colors, no resize, line-input only).
+  // The `-c` form starts an interactive login shell with `cd` to
+  // the target path; `exec bash` keeps the shell alive after `cd`
+  // so the prompt stays open for further commands.
+  const where = await exec(`where bash.exe`);
+  if (where.exitCode !== 0 || !where.stdOut.trim()) {
+    console.warn('openInBash: bash.exe not found in PATH (install Git for Windows)');
+    return;
+  }
+  const bashPath = where.stdOut.split(/\r?\n/)[0].trim();
+  const wt = await exec(`where wt.exe`);
+  const escaped = path.replace(/\\/g, '/').replace(/"/g, '\\"');
+  if (wt.exitCode === 0 && wt.stdOut.trim()) {
+    await execBg(`wt.exe -d "${path}" "${bashPath}" --login -i -c "cd \\"${escaped}\\"; exec bash"`);
+  } else {
+    await execBg(`"${bashPath}" --login -i -c "cd \\"${escaped}\\"; exec bash"`);
   }
 }
 

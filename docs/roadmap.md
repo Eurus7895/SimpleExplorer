@@ -5,11 +5,13 @@ state lives in [`design.md`](./design.md); repository conventions live
 in [`../CLAUDE.md`](../CLAUDE.md). This file is the source of truth for
 **what's painted but not wired**, and **what hasn't been started**.
 
-Status as of the Phase 8b branch (`feat/phase-8b-pty-terminal`):
-post-MVP, pre-v1. Phases 1, 1.5, 2, 3, 4, 5, 6a, 6b, 7, and **8b**
-(real PTY-backed terminal via ConPTY + xterm.js) have shipped.
-The Workspace direction has been removed; the remaining
-directions are Fluent (A) and Cmd (B). Remaining Phase 8 work:
+Status: post-MVP, pre-v1. Phases 1, 1.5, 2, 3, 4, 5, 6a, 6b, 7 have
+shipped. **Phase 8b (embedded PTY terminal via ConPTY + xterm.js) was
+reverted** — see the dedicated section below — and replaced with
+three external-launcher actions (Open in Terminal / PowerShell / Cmd)
+that spawn at the active pane's path. The Workspace direction has
+been removed; the remaining directions are Fluent (A) and Cmd (B).
+Remaining Phase 8 work:
 **8a** big-dir listing perf + tree virtualization, **8c**
 copy/move progress + conflict UI + cancellation, **8d**
 selection keyboard ergonomics (Ctrl+A, Shift+arrows), and
@@ -724,11 +726,65 @@ Two related "things slow down on big trees" fixes, batched.
 - Out of scope: lazy-load row stats inside the *tree* (it only
   shows folder names, no size/modified). Just the directory pane.
 
-#### ~~8b — Helper rebuild + ConPTY + xterm.js~~ (shipped)
+#### ~~8b — Helper rebuild + ConPTY + xterm.js~~ (reverted to external launchers)
 
 The promised real terminal upgrade. Phase 7g shipped a
-line-oriented stub that broke for vim / less / top; 8b delivers
-a proper PTY-backed terminal.
+line-oriented stub that broke for vim / less / top; 8b delivered
+a proper PTY-backed terminal — which then turned out to be unusable
+under Neutralino's spawn context on Windows 11 build 26100. After
+extended debugging (multiple console-state resets, focus-event
+suppression, Win32 input-mode encoding, shell swaps) showed that
+`WriteFile` to the PTY input pipe always succeeded and conhost
+always drained the bytes, but no shell — `cmd.exe` or
+`powershell.exe` — ever received them as console input records,
+8b was reverted. The same `extras\shellhelp.exe pty cmd.exe`
+binary worked end-to-end when launched manually from a real
+PowerShell window, isolating the fault to Neutralino's `cmd /c`
+spawn wrapper. With no path to fix that from app code, the embedded
+terminal was removed and replaced with three external-launcher
+actions (`Open in Terminal`, `Open in PowerShell`, `Open in Cmd`)
+in `src/fs.js`. `xterm.js` vendor, `src/terminal.js`, and the
+`pty` verb in `tools/shellhelp.cpp` are all gone.
+
+The replacement surface (`fix/pty-free-console` branch):
+
+- **Four launchers in `src/fs.js`.** `openInTerminal` (auto-detect
+  wt → cmd fallback), `openInPowerShell`, `openInCmd` (no auto
+  upgrade — explicit cmd intent), `openInBash` (Git for Windows
+  bash, wt-hosted when available with `cd …; exec bash`).
+- **Palette entries** in `src/palette.js`: "Open in Terminal" /
+  "Open in PowerShell" / "Open in Cmd" / "Open in Git Bash". Each
+  dispatches the matching action through the existing palette
+  command channel.
+- **Toolbar / rail dropdown.** The terminal icon in the Fluent
+  toolbar and the Cmd direction's rail is a dropdown (via
+  `showShellPickerMenu` in `src/pane.js`, reusing the right-click
+  menu primitives) instead of a one-shot launcher. PowerShell /
+  Command Prompt / Git Bash / "Open in Terminal" — Esc or
+  outside-click dismisses the same way the right-click menu does.
+- **Search no longer blocks the palette.** `runRecursiveSearch`
+  re-renders the pane every 80ms while results stream in.
+  `render()` wipes `#root.innerHTML` and rebuilds the topbar that
+  hosts the palette input, so the palette overlay (which lives on
+  `document.body`) ended up with listeners bound to a detached
+  input — typing did nothing. The scheduler now skips the periodic
+  re-render while `isPaletteOpen()` is true and re-checks every
+  200ms; search keeps streaming into `pane.search.results`, and the
+  final render once the palette closes shows everything.
+- **Quieter `readDirectory` warnings.** Windows scatters
+  `Application Data` / `Cookies` / `My Documents` / `Start Menu`
+  reparse-point junctions across every user profile; their DACL
+  denies list-folder and Neutralino returns `NE_FS_NOPATHE` /
+  `NE_RT_NATRTER`. Those two codes now go to `console.debug`
+  instead of `console.warn` so the dev console isn't flooded on
+  every home-folder expansion — genuine errors still warn.
+- **DevTools off in production.** `modes.window.enableInspector`
+  flipped to `false`. `npm run dev` re-enables it via the runtime
+  CLI override (`neu run -- --window-enable-inspector=true`),
+  `npm run build` and `npm run start` ship without the inspector
+  window.
+
+Original shipped scope, kept for context:
 
 Shipped on `feat/phase-8b-pty-terminal`:
 
@@ -985,8 +1041,10 @@ flags.
 - **Streaming format.** Crew's stdout might be plain text or it
   might emit ANSI / token-chunked output. We treat it as plain
   text for v1; if we see escape sequences we cope with them in
-  9c by piping through a tiny ANSI stripper (or accept the noise
-  until Phase 8b's xterm.js lands).
+  9c by piping through a tiny ANSI stripper (the embedded
+  xterm.js path that Phase 8b would have provided was reverted —
+  see the 8b retrospective — so there's no in-process VT
+  renderer to lean on).
 - **Auth on first run.** Crew shows a device-code URL in stderr.
   We display stderr inline so the user can copy the URL — no
   in-app browser flow.

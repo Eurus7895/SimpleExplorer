@@ -643,6 +643,46 @@ function dismissAllMenus() {
   openMenus = [];
 }
 
+// Shell-picker dropdown, anchored under a toolbar/rail button. Lists
+// the three external launchers wired in `src/fs.js` and dispatches via
+// the same `explorer:action` channel as the right-click menu. The
+// caller passes the button's bounding rect (or any DOMRect-shaped
+// object); we position the menu just below it, with the existing
+// outside-click / Escape dismiss handlers picked up via attachDismiss.
+export function showShellPickerMenu(anchorRect) {
+  dismissAllMenus();
+  const menu = createMenuEl();
+  const items = [
+    { label: 'PowerShell',          act: 'powershell' },
+    { label: 'Command Prompt',      act: 'cmd' },
+    { label: 'Git Bash',            act: 'bash' },
+    null,
+    { label: 'Open in Terminal',    act: 'terminal' },
+  ];
+  items.forEach((it) => {
+    if (!it) {
+      const sep = document.createElement('div');
+      sep.className = 'ctx-menu__sep';
+      menu.appendChild(sep);
+      return;
+    }
+    const row = document.createElement('div');
+    row.className = 'ctx-menu__item';
+    row.innerHTML = `<span>${escapeHtml(it.label)}</span>`;
+    row.addEventListener('click', () => {
+      dismissAllMenus();
+      document.dispatchEvent(new CustomEvent('explorer:action', { detail: it.act }));
+    });
+    menu.appendChild(row);
+  });
+  document.body.appendChild(menu);
+  // positionAt expects (x, y); anchor the menu's top-left below the
+  // button's bottom-left so it visually drops down from the icon.
+  positionAt(menu, anchorRect.left, anchorRect.bottom + 4);
+  openMenus.push(menu);
+  attachDismiss();
+}
+
 // Right-click menu. Items dispatch an 'explorer:action' CustomEvent that
 // app.js routes through doAction(); shell-extension items invoke the
 // helper exe directly. Closes on outside click or Escape.

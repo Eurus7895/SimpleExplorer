@@ -4,13 +4,12 @@
 // Visuals trace explorer-fluent.jsx in the design bundle.
 
 import { iconHTML } from '../icons.js';
-import { renderRows, renderColumnHeader, renderBreadcrumb, getRecent, selectionSizeLabel, renderSearchBanner } from '../pane.js';
+import { renderRows, renderColumnHeader, renderBreadcrumb, getRecent, selectionSizeLabel, renderSearchBanner, showShellPickerMenu } from '../pane.js';
 import { SIDEBAR_FULL } from '../sidebar-data.js';
 import { applyLayout } from '../layout.js';
 import { openPalette, isPaletteOpen } from '../palette.js';
 import { ensurePreviewPanel, bindPreviewClose, showPreviewFor } from '../preview.js';
 import { renderTree } from '../tree.js';
-import { renderTerminal, isTerminalOpen, toggleTerminal } from '../terminal.js';
 
 const LAYOUT_OPTS = [
   { id: '1',  icn: 'one',       title: 'Single' },
@@ -43,18 +42,6 @@ export function renderFluent(root, ctx) {
     queueMicrotask(() => ctx.pushPreview?.(ctx.activePane));
   }
   app.appendChild(body);
-
-  // Integrated terminal (Phase 7g) — bottom panel, Fluent direction.
-  // Same module as Cmd; the styling adapts via the shared .term* rules.
-  if (isTerminalOpen()) {
-    const termWrap = el('div', 'a-term-wrap');
-    const activePane = ctx.panes[ctx.activePane];
-    renderTerminal(termWrap, {
-      onClose: () => { toggleTerminal(); ctx.rerender?.(); },
-      panePath: activePane?.path,
-    });
-    app.appendChild(termWrap);
-  }
 
   app.appendChild(statusBar(ctx));
   root.appendChild(app);
@@ -111,7 +98,7 @@ function commandBar(ctx) {
       <kbd>Ctrl K</kbd>
     </div>
     <div class="spacer"></div>
-    <button class="iconbtn ${isTerminalOpen() ? 'on' : ''}" data-act="terminalToggle" title="Toggle terminal (Ctrl+\`)">${iconHTML('terminal', 14)}</button>
+    <button class="iconbtn" data-shellpicker title="Open a terminal here">${iconHTML('terminal', 14)}</button>
     <button class="iconbtn ${ctx.previewOpen ? 'on' : ''}" data-act="previewToggle" title="Toggle preview pane (Ctrl+P)">${iconHTML('eye', 14)}</button>
     ${layoutPicker(ctx)}
     <span class="a-sep"></span>
@@ -199,13 +186,13 @@ function paneCard(ctx, pane, i) {
   const card = el('div', 'a-pane' + (i === ctx.activePane ? ' a-pane--active' : ''));
   card.dataset.paneIdx = i;
   // Programmatic focus target. tabindex -1 keeps the card out of the
-  // Tab order but lets us call card.focus() on click so keyboard goes
-  // here rather than back to the terminal input.
+  // Tab order but lets us call card.focus() on click so explorer
+  // shortcuts (F2 / Del / type-to-jump) start working immediately.
   card.tabIndex = -1;
   card.addEventListener('mousedown', () => {
-    // Take focus on mousedown (before click) so the terminal blur
-    // happens before any selection logic runs. preventScroll stops
-    // the WebView from jump-scrolling on focus change.
+    // Take focus on mousedown (before click) so any selection logic
+    // runs after the focus change. preventScroll stops the WebView
+    // from jump-scrolling on focus change.
     card.focus({ preventScroll: true });
   });
   card.addEventListener('click', () => ctx.setActivePane(i));
@@ -321,6 +308,11 @@ function bindClicks(scope, ctx) {
     el.addEventListener('click', () => ctx.onAction(el.dataset.action)));
   scope.querySelectorAll('[data-dir]').forEach((el) =>
     el.addEventListener('click', () => ctx.setDirection(el.dataset.dir)));
+  scope.querySelectorAll('[data-shellpicker]').forEach((el) =>
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showShellPickerMenu(el.getBoundingClientRect());
+    }));
 }
 
 function bindWinCtl(scope, ctx) {

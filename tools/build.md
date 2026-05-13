@@ -1,10 +1,9 @@
 # Building `shellhelp.exe`
 
 Native Win32 helper used by `src/fs.js` for fast right-click actions
-(Properties dialog, delete-to-Recycle-Bin, drive listing) and by
-`src/terminal.js` for the integrated terminal's PTY backend (Phase 8b).
-Eliminates the ~200 ms PowerShell cold-start tax on right-click actions
-and unlocks ConPTY for the real terminal.
+(Properties dialog, delete-to-Recycle-Bin, drive listing, context menu,
+thumbnails, OS drag-out). Eliminates the ~200 ms PowerShell cold-start
+tax on those paths.
 
 ## Two ways to build
 
@@ -45,23 +44,13 @@ From a Developer Command Prompt:
 ```
 cd tools
 cl /nologo /EHsc /O2 /utf-8 shellhelp.cpp ^
-   /link shell32.lib ole32.lib user32.lib gdi32.lib windowscodecs.lib ws2_32.lib
+   /link shell32.lib ole32.lib user32.lib gdi32.lib windowscodecs.lib
 ```
 
 (`user32.lib` is needed for the menu-walking calls — `GetMenuItemCount`,
 `GetMenuItemInfoW`, `CreatePopupMenu` — used by the `menu` / `invoke` verbs.
-`gdi32.lib` + `windowscodecs.lib` are added in Phase 7e for the `thumb`
-verb's `IShellItemImageFactory::GetImage` and WIC PNG encoder.
-`ws2_32.lib` is added for the `pty` verb's loopback TCP listener — JS posts
-keystrokes there instead of relying on Neutralino's broken Windows stdin
-plumbing. `shellhelp.cpp` also carries `#pragma comment(lib, "ws2_32.lib")`
-so the dependency is self-describing even outside this command line.
-
-The Phase 8b `pty` verb's other dependencies — `CreatePseudoConsole` /
-`ResizePseudoConsole` / `ClosePseudoConsole` — ship in `kernel32` (already
-linked by default) and are resolved at runtime via `GetProcAddress` so the
-binary still loads on Windows < 1809 and returns exit code 3 cleanly.
-`_beginthreadex` is in the C runtime, also already linked.)
+`gdi32.lib` + `windowscodecs.lib` are needed for the `thumb` verb's
+`IShellItemImageFactory::GetImage` and WIC PNG encoder.)
 
 The output is `tools/shellhelp.exe`. Move it next to the runtime so the app
 picks it up:
