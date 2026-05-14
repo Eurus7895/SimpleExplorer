@@ -277,7 +277,15 @@ export async function homeDir() {
   } catch { return '~'; }
 }
 
-export async function listDir(path) {
+// Beyond this many entries we skip the eager getStats round-trip and
+// emit name/is_dir/extension immediately; size + modified_ms fill in
+// asynchronously per `EAGER_STAT_CHUNK`. On a 10k-file folder the eager
+// path costs 10k IPC trips (10+ s cold); the lazy path paints in tens
+// of ms and back-fills the rest in the background.
+const EAGER_STAT_THRESHOLD = 200;
+const EAGER_STAT_CHUNK = 100;
+
+export async function listDir(path, opts = {}) {
   if (!N) {
     const items = SAMPLE[path];
     if (!items) return [];
@@ -309,35 +317,59 @@ export async function listDir(path) {
     }
     return [];
   }
-  const out = [];
   // Skip the "." and ".." sentinel entries Neutralino includes on some
   // platforms.
   const real = entries.filter((e) => e.entry !== '.' && e.entry !== '..');
-  await Promise.all(real.map(async (e) => {
+  const out = real.map((e) => {
     const name = e.entry || e.name || '';
     const full = e.path || joinPath(path, name);
     const isDir = e.type === 'DIRECTORY';
-    let size = 0, modified_ms = 0;
-    try {
-      const s = await N.filesystem.getStats(full);
-      size = s.size || 0;
-      modified_ms = s.modifiedAt || 0;
-    } catch {}
-    out.push({
+    return {
       name,
       is_dir: isDir,
-      size,
-      modified_ms,
+      size: 0,
+      modified_ms: 0,
       extension: isDir ? '' : extOf(name),
       path: full,
-    });
-  }));
-  // Folders first, then case-insensitive name sort.
+    };
+  });
+  // Folders first, then case-insensitive name sort. We sort before the
+  // stat fill so the first paint is deterministic (size/modified sorts
+  // re-stabilize as stats land — same trade-off Explorer makes while
+  // it walks a big folder).
   out.sort((a, b) => {
     if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
     return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
   });
+  if (out.length <= EAGER_STAT_THRESHOLD) {
+    await Promise.all(out.map((it) => fillStat(it)));
+    return out;
+  }
+  // Big folder: return now, fill stats in the background. Caller can
+  // opt in via `opts.onProgress` to drive a coalesced re-render, and
+  // `opts.signal` to cancel when the pane navigates away.
+  void fillStatsAsync(out, opts);
   return out;
+}
+
+async function fillStat(entry) {
+  try {
+    const s = await N.filesystem.getStats(entry.path);
+    entry.size = s.size || 0;
+    entry.modified_ms = s.modifiedAt || 0;
+  } catch {}
+}
+
+async function fillStatsAsync(out, { signal, onProgress } = {}) {
+  for (let i = 0; i < out.length; i += EAGER_STAT_CHUNK) {
+    if (signal?.aborted) return;
+    const slice = out.slice(i, i + EAGER_STAT_CHUNK);
+    await Promise.all(slice.map((it) => fillStat(it)));
+    if (signal?.aborted) return;
+    onProgress?.();
+    // Yield to the UI between chunks so input + paint stay responsive.
+    await new Promise((r) => setTimeout(r, 0));
+  }
 }
 
 // Read text from a file, capped at maxBytes characters (rough — string

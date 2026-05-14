@@ -108,6 +108,7 @@ async function init() {
   await Promise.all(panes.map((p) => safeLoad(p)));
   render();
   bindGlobalKeys();
+  bindEntriesUpdates();
   // Drives populate after first paint so list/render isn't blocked on a
   // helper / PowerShell shell-out at startup.
   fs.listDrives().then((d) => { drives = d; render(); }).catch(() => {});
@@ -375,6 +376,29 @@ function runRecursiveSearch(paneIdx, query) {
       else scheduleRender();
     },
   }).catch((e) => console.warn('recursiveSearch failed:', e));
+}
+
+// Big-folder lazy stat fill (fs.listDir on > 200-entry directories
+// returns immediately with size/modified placeholders, then back-fills
+// in chunks). Each chunk fires `explorer:entries-updated`; we coalesce
+// per-frame redraws so 100 chunks don't trigger 100 render() calls.
+// Skipped while the palette is open — render() wipes #root and would
+// detach the palette input the user is typing into (same hazard the
+// recursive-search scheduler guards against).
+function bindEntriesUpdates() {
+  let queued = false;
+  const flush = () => {
+    queued = false;
+    if (isPaletteOpen()) { schedule(); return; }
+    render();
+  };
+  const schedule = () => {
+    if (queued) return;
+    queued = true;
+    if (isPaletteOpen()) setTimeout(flush, 200);
+    else requestAnimationFrame(flush);
+  };
+  document.addEventListener('explorer:entries-updated', schedule);
 }
 
 function cancelSearch(pane) {

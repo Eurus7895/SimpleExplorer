@@ -139,6 +139,7 @@ function sidebar(ctx) {
     return side;
   }
 
+  const body = el('div', 'a-sidebar__body');
   SIDEBAR_FULL.forEach((sec) => {
     const block = el('div', 'a-sidebar__block');
     const title = el('div', 'a-sidebar__title');
@@ -151,7 +152,7 @@ function sidebar(ctx) {
       if (target) row.addEventListener('click', () => ctx.onPaneNav(ctx.activePane, target));
       block.appendChild(row);
     });
-    side.appendChild(block);
+    body.appendChild(block);
   });
 
   if (ctx.drives.length) {
@@ -164,7 +165,7 @@ function sidebar(ctx) {
       row.addEventListener('click', () => ctx.onPaneNav(ctx.activePane, d.path));
       block.appendChild(row);
     });
-    side.appendChild(block);
+    body.appendChild(block);
   }
 
   const recent = getRecent();
@@ -177,8 +178,9 @@ function sidebar(ctx) {
       row.addEventListener('click', () => ctx.onPaneNav(ctx.activePane, p));
       block.appendChild(row);
     });
-    side.appendChild(block);
+    body.appendChild(block);
   }
+  side.appendChild(body);
   return side;
 }
 

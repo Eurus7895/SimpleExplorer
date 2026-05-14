@@ -5,15 +5,14 @@ state lives in [`design.md`](./design.md); repository conventions live
 in [`../CLAUDE.md`](../CLAUDE.md). This file is the source of truth for
 **what's painted but not wired**, and **what hasn't been started**.
 
-Status: post-MVP, pre-v1. Phases 1, 1.5, 2, 3, 4, 5, 6a, 6b, 7 have
+Status: post-MVP, pre-v1. Phases 1, 1.5, 2, 3, 4, 5, 6a, 6b, 7, 8a have
 shipped. **Phase 8b (embedded PTY terminal via ConPTY + xterm.js) was
 reverted** — see the dedicated section below — and replaced with
 three external-launcher actions (Open in Terminal / PowerShell / Cmd)
 that spawn at the active pane's path. The Workspace direction has
 been removed; the remaining directions are Fluent (A) and Cmd (B).
 Remaining Phase 8 work:
-**8a** big-dir listing perf + tree virtualization, **8c**
-copy/move progress + conflict UI + cancellation, **8d**
+**8c** copy/move progress + conflict UI + cancellation, **8d**
 selection keyboard ergonomics (Ctrl+A, Shift+arrows), and
 **8e** in-app dialogs to replace the native `prompt()` /
 `confirm()` that breaks the Mica chrome. After that,
@@ -689,11 +688,12 @@ skin keeps "Open in Terminal" as an external spawn.
 
 Where Phase 7 was a feature-breadth push, Phase 8 is the cleanup
 and scaling pass. Five sub-phases, total ~10.5 days. Ordered by
-user impact: 8a fixes the only place the app feels visibly slow,
-8b unlocks the deferred terminal upgrade, 8c stops silent
-data-overwrite footguns, 8d closes the keyboard-ergonomics gap,
-8e replaces the WebView2-native `prompt()` / `confirm()` dialogs
-that break the Mica chrome whenever the user clicks New / Delete.
+user impact: 8a fixes the only place the app feels visibly slow
+(shipped), 8b unlocks the deferred terminal upgrade (reverted —
+see the dedicated section), 8c stops silent data-overwrite
+footguns, 8d closes the keyboard-ergonomics gap, 8e replaces the
+WebView2-native `prompt()` / `confirm()` dialogs that break the
+Mica chrome whenever the user clicks New / Delete.
 
 | Sub-phase | Theme | Size | Helper? | Risk |
 | --- | --- | --- | --- | --- |
@@ -703,26 +703,41 @@ that break the Mica chrome whenever the user clicks New / Delete.
 | 8d | Selection keyboard ergonomics | 1d | no | low |
 | 8e | In-app dialogs for command-bar buttons | 1.5d | no | low |
 
-#### 8a — Listing perf + tree virtualization (~2 days)
+#### ~~8a — Listing perf + tree virtualization~~ (shipped)
 
 Two related "things slow down on big trees" fixes, batched.
 
-- **Big-directory listing.** `fs.listDir` currently does
-  `Promise.all` over `getStats` for every entry. On a 10 k-file
-  folder that's 10 k Neutralino IPC round-trips — visibly slow
-  (10+ s on cold cache). Fix: skip per-file stat on first paint,
-  emit name + is_dir + extension directly from `readDirectory`
-  results, then fill in size + modified asynchronously per
-  visible row (or per the active sort key). Falls back to the
-  current eager path when the entry count is small (~< 200) so
-  small-folder navigation stays instant.
-- **Tree virtualization.** Phase 7f rendered every visible node;
-  `src/tree.js` ships unvirtualized by design. Replace the inner
-  list rendering with a windowed view: fixed row height (24 px),
-  spacers above/below to preserve scroll geometry, only the
-  rows in the current viewport ± 8-row buffer are in DOM.
-  Works because expanded children are already eagerly fetched —
-  we're just gating DOM creation on visibility.
+- **Big-directory listing** (`src/fs.js`). `fs.listDir` now skips
+  the per-entry `getStats` round-trip on first paint for folders
+  above `EAGER_STAT_THRESHOLD` (200 entries); it emits
+  name + is_dir + extension immediately, sorts folders-first by
+  name for a deterministic first paint, and back-fills size +
+  modified asynchronously in chunks of 100 (`EAGER_STAT_CHUNK`).
+  Each chunk yields to the event loop and fires an optional
+  `onProgress` callback. Small folders keep the eager
+  `Promise.all` path so navigation into a typical user directory
+  is unchanged. `loadPath` in `src/pane.js` wires an
+  `AbortController` per pane so navigating away cancels an
+  in-flight fill, and dispatches `explorer:entries-updated` on
+  each chunk; `src/app.js` `bindEntriesUpdates` coalesces those
+  into one `render()` per animation frame (and defers while the
+  palette is open, mirroring the search scheduler's hazard).
+- **Tree virtualization** (`src/tree.js`). The tree now walks
+  the open tree into a single flat `visibleNodes` array and
+  renders only the rows in the current viewport ± 8 with fixed
+  24 px row height. An outer `tree-inner` div carries
+  `height = visibleNodes.length * ROW_HEIGHT` to preserve
+  scrollbar geometry; each visible row is `position: absolute`
+  with `top = idx * ROW_HEIGHT`. Scroll, expand/collapse, and
+  async child loads (loading / empty pseudo-rows) all funnel
+  through one `rebuild()` → `renderWindow()` pair.
+  `lastScrollTop` is preserved at module scope so the
+  parent direction's full re-render of the sidebar doesn't
+  reset the scroll position. A `ResizeObserver` re-paints once
+  the container is mounted with a real `clientHeight`. The
+  sidebar wrapper switched to `display: flex; flex-direction:
+  column` so the tree (and a new `.a-sidebar__body` wrapper for
+  Quick mode) own scrolling instead of the outer `.a-sidebar`.
 - Out of scope: lazy-load row stats inside the *tree* (it only
   shows folder names, no size/modified). Just the directory pane.
 

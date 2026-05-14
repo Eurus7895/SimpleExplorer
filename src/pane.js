@@ -113,13 +113,27 @@ export async function tabClose(pane, idx) {
 }
 
 export async function loadPath(state, path) {
+  // Cancel any in-flight lazy stat-fill from the previous navigation
+  // so its onProgress callbacks don't leak past this load and stomp
+  // the new pane's entries with a stale re-render.
+  state._listAbort?.abort();
+  const ac = new AbortController();
+  state._listAbort = ac;
+
   const norm = fs.normalizePath(path);
   state.loading = true;
   state.path = norm;
   state.entries = [];
   state.selected.clear();
   try {
-    state.entries = await fs.listDir(norm);
+    state.entries = await fs.listDir(norm, {
+      signal: ac.signal,
+      onProgress: () => {
+        if (ac.signal.aborted) return;
+        // Coalesced re-render lives in app.js; we just signal.
+        document.dispatchEvent(new CustomEvent('explorer:entries-updated'));
+      },
+    });
   } catch (e) {
     state.entries = [];
     console.warn('listDir failed', norm, e);
