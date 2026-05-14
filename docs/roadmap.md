@@ -5,15 +5,14 @@ state lives in [`design.md`](./design.md); repository conventions live
 in [`../CLAUDE.md`](../CLAUDE.md). This file is the source of truth for
 **what's painted but not wired**, and **what hasn't been started**.
 
-Status: post-MVP, pre-v1. Phases 1, 1.5, 2, 3, 4, 5, 6a, 6b, 7, 8a have
-shipped. **Phase 8b (embedded PTY terminal via ConPTY + xterm.js) was
-reverted** — see the dedicated section below — and replaced with
-three external-launcher actions (Open in Terminal / PowerShell / Cmd)
-that spawn at the active pane's path. The Workspace direction has
-been removed; the remaining directions are Fluent (A) and Cmd (B).
-Remaining Phase 8 work:
-**8c** copy/move progress + conflict UI + cancellation, **8d**
-selection keyboard ergonomics (Ctrl+A, Shift+arrows), and
+Status: post-MVP, pre-v1. Phases 1, 1.5, 2, 3, 4, 5, 6a, 6b, 7, 8a,
+8c have shipped. **Phase 8b (embedded PTY terminal via ConPTY +
+xterm.js) was reverted** — see the dedicated section below — and
+replaced with three external-launcher actions (Open in Terminal /
+PowerShell / Cmd) that spawn at the active pane's path. The
+Workspace direction has been removed; the remaining directions are
+Fluent (A) and Cmd (B). Remaining Phase 8 work:
+**8d** selection keyboard ergonomics (Ctrl+A, Shift+arrows), and
 **8e** in-app dialogs to replace the native `prompt()` /
 `confirm()` that breaks the Mica chrome. After that,
 **Phase 9 Crew (Copilot CLI) integration** (shell out to the
