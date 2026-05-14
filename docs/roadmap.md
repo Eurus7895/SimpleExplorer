@@ -6,13 +6,12 @@ in [`../CLAUDE.md`](../CLAUDE.md). This file is the source of truth for
 **what's painted but not wired**, and **what hasn't been started**.
 
 Status: post-MVP, pre-v1. Phases 1, 1.5, 2, 3, 4, 5, 6a, 6b, 7, 8a,
-8c have shipped. **Phase 8b (embedded PTY terminal via ConPTY +
-xterm.js) was reverted** — see the dedicated section below — and
+8c, 8d have shipped. **Phase 8b (embedded PTY terminal via ConPTY
++ xterm.js) was reverted** — see the dedicated section below — and
 replaced with three external-launcher actions (Open in Terminal /
 PowerShell / Cmd) that spawn at the active pane's path. The
 Workspace direction has been removed; the remaining directions are
 Fluent (A) and Cmd (B). Remaining Phase 8 work:
-**8d** selection keyboard ergonomics (Ctrl+A, Shift+arrows), and
 **8e** in-app dialogs to replace the native `prompt()` /
 `confirm()` that breaks the Mica chrome. After that,
 **Phase 9 Crew (Copilot CLI) integration** (shell out to the
@@ -876,25 +875,56 @@ in Explorer" hint, copy-to-clipboard-then-paste flow, recursive
 byte-total precompute for folders (we report bytes lazily off
 each item's post-op stat — no pre-walk).
 
-#### 8d — Selection keyboard ergonomics (~1 day)
+#### ~~8d — Selection keyboard ergonomics~~ (shipped)
 
-The selection model (`pane.selected: Set<string>`) supports
-multi-select via Ctrl/Shift+click but has no keyboard shortcuts.
-Closes the gap with stock Explorer.
+Per-tab `selectionAnchor` + `selectionFocus` fields live on the
+tab record alongside `selected` (added to `TAB_FIELDS` so they
+survive tab switches; cleared on `loadPath`). Anchor tracks where
+a Shift-range expands from; focus is the keyboard cursor that
+arrow keys move. They coincide on a plain click and on every
+plain ArrowUp / ArrowDown; they diverge once Shift+click or
+Shift+Arrow starts extending.
 
-- `Ctrl+A` selects every visible row in the active pane.
-- `Shift+ArrowDown` / `Shift+ArrowUp` extend the selection from
-  the anchor (last single-clicked row) one row at a time. Track
-  `pane.selectionAnchor` so a fresh single-click resets it.
-- `Home` / `End` move the focused row to first / last visible;
-  `Shift+Home` / `Shift+End` extend the selection there.
-- `Ctrl+Click` toggles individual rows (already works via the
-  click handler) — no change, just verify it.
-- All of this respects the focus-zone gate from the recent fix:
-  shortcuts only fire when the active pane card has focus, not
-  when the terminal does.
-- Out of scope: rubber-band select (drag-to-select rectangle) —
-  bigger UX change, separate phase.
+`src/pane.js` exports four new helpers — `selectRange(state,
+anchor, target)` (used by Shift-click and Shift-Arrow / Shift-
+Home / Shift-End), `selectAll(state)`, `moveSelectionByDelta(
+state, delta, extending)`, and `moveSelectionToBoundary(state,
+boundary, extending)` — all operating on the currently-visible
+order (`filtered(state)`) so a re-sort doesn't move the cursor
+into a row the user can no longer see.
+
+`bindGlobalKeys` in `src/app.js` wires:
+- **`Ctrl+A`** → `selectAll` on the active pane.
+- **`ArrowUp` / `ArrowDown`** (no modifier) → move cursor one row,
+  single-select; **`Shift+ArrowUp` / `Shift+ArrowDown`** → extend
+  range from the anchor. Plain Backspace (go up) and Alt+Arrow
+  (history) are unchanged.
+- **`Home` / `End`** → cursor to first / last visible row,
+  single-select; **`Shift+Home` / `Shift+End`** → extend range
+  to the boundary.
+- **`Esc`** also clears anchor / focus (was: only `selected`).
+
+After each operation the new `scrollFocusedRowIntoView` helper
+walks `.a-pane--active .row[data-name=…]` / `.b-pane--active …`
+and scrolls the landing row into view. Type-to-jump (the single-
+letter / prefix matcher already in app.js) also updates anchor +
+focus now so a subsequent Shift+Arrow extends from the jumped-to
+row instead of a stale earlier click.
+
+The row click handler in `src/pane.js` no longer conflates Shift
+with Ctrl; Shift+click now opens a range from the anchor, Ctrl /
+Meta+click toggles a single row, plain click resets anchor and
+focus. A new `.row--focus` CSS class draws a 1 px accent outline
+inset on the cursor row so the user can see what ArrowDown will
+move from when multi-select is active.
+
+Focus-zone gate: the existing `if (tgt instanceof HTMLInputElement
+| HTMLTextAreaElement) return` bail keeps every new shortcut out
+of inputs (palette, search, filter, rename) so the browser's
+default Ctrl+A / arrow / Home / End behavior runs there.
+
+Out of scope (as planned): rubber-band select (drag-to-select
+rectangle) — bigger UX change, separate phase.
 
 #### 8e — In-app dialogs for command-bar buttons (~1.5 days)
 

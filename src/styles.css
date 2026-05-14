@@ -77,6 +77,15 @@ kbd {
   background: var(--accent-bg);
   border-left-color: var(--accent);
 }
+/* Phase 8d: keyboard cursor — a 1 px outline on the row the next
+   ArrowUp / ArrowDown will move from. Sits inside the row so it
+   doesn't shift layout. When the focused row is also selected the
+   outline overlays the accent background; when not (after a Ctrl-
+   click that landed on an unselected row) it stands alone. */
+.row--focus {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
 .row__name {
   display: flex; align-items: center; gap: 8px;
   color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

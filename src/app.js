@@ -3,7 +3,7 @@
 // that paints the chrome around the panes.
 
 import * as fs from './fs.js';
-import { createPaneState, navigate, goBack, goForward, goUp, loadPath, tabNew, tabClose, tabSwitch, tabSnapshot, sortedEntries } from './pane.js';
+import { createPaneState, navigate, goBack, goForward, goUp, loadPath, tabNew, tabClose, tabSwitch, tabSnapshot, sortedEntries, selectAll, moveSelectionByDelta, moveSelectionToBoundary } from './pane.js';
 import { renderFluent, statusBar as fluentStatusBar } from './directions/fluent.js';
 import { renderCmd } from './directions/cmd.js';
 import { LAYOUT_DEFS, DEFAULT_SPLITS } from './layout.js';
@@ -646,11 +646,38 @@ function bindGlobalKeys() {
     else if (e.key === 'Backspace') { goUp(panes[activePane]).then(render); }
     else if (e.altKey && e.key === 'ArrowLeft') { goBack(panes[activePane]).then(render); }
     else if (e.altKey && e.key === 'ArrowRight') { goForward(panes[activePane]).then(render); }
+    else if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+      const pane = panes[activePane];
+      if (!pane) return;
+      e.preventDefault();
+      selectAll(pane);
+      render();
+      scrollFocusedRowIntoView(pane);
+    }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      const pane = panes[activePane];
+      if (!pane) return;
+      e.preventDefault();
+      const next = moveSelectionByDelta(pane, e.key === 'ArrowDown' ? 1 : -1, e.shiftKey);
+      if (next) { render(); scrollFocusedRowIntoView(pane); }
+    }
+    else if (e.key === 'Home' || e.key === 'End') {
+      const pane = panes[activePane];
+      if (!pane) return;
+      e.preventDefault();
+      const next = moveSelectionToBoundary(pane, e.key === 'End' ? 'end' : 'home', e.shiftKey);
+      if (next) { render(); scrollFocusedRowIntoView(pane); }
+    }
     else if (e.key === 'Escape') {
       typeBuf = '';
       clearTimeout(typeBufTimer);
       const pane = panes[activePane];
-      if (pane?.selected.size) { pane.selected.clear(); render(); }
+      if (pane?.selected.size) {
+        pane.selected.clear();
+        pane.selectionAnchor = null;
+        pane.selectionFocus = null;
+        render();
+      }
     }
     else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
       // Type-to-jump (Windows Explorer style):
@@ -709,10 +736,22 @@ function typeJump(prefix, cycle) {
   }
   pane.selected.clear();
   pane.selected.add(found.name);
+  // Keep anchor / focus in sync so a subsequent Shift+Arrow extends
+  // from the row the user just jumped to, not from a stale earlier
+  // click. Matches stock Explorer's type-to-jump behavior.
+  pane.selectionAnchor = found.name;
+  pane.selectionFocus = found.name;
   render();
-  // After re-render, find the matching row in the active pane and scroll
-  // it into view. CSS.escape handles names with quotes / backslashes.
-  const sel = `.row[data-name="${CSS.escape(found.name)}"]`;
+  scrollFocusedRowIntoView(pane);
+}
+
+// Scroll the row marked as pane.selectionFocus into view in the active
+// pane. Falls back to the first selected name when focus isn't set
+// (e.g. early in the session). No-op when neither exists.
+function scrollFocusedRowIntoView(pane) {
+  const name = pane?.selectionFocus || [...(pane?.selected || [])][0];
+  if (!name) return;
+  const sel = `.row[data-name="${CSS.escape(name)}"]`;
   const row = document.querySelector(`.a-pane--active ${sel}, .b-pane--active ${sel}`);
   row?.scrollIntoView({ block: 'nearest' });
 }

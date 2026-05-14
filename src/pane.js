@@ -36,6 +36,14 @@ export function createTabState(initialPath, init = {}) {
     filter: '',
     sort: init.sort ? { ...init.sort } : { ...DEFAULT_SORT },
     view: init.view || DEFAULT_VIEW,
+    // Phase 8d selection model: anchor is the row a Shift-range expands
+    // from (set on plain / Ctrl click + Home / End / Ctrl+A); focus is
+    // the cursor row that ArrowUp / ArrowDown moves. Anchor and focus
+    // coincide on single-select; they diverge once Shift+click or
+    // Shift+Arrow starts extending. Both are entry names (not paths)
+    // so they survive a re-sort.
+    selectionAnchor: null,
+    selectionFocus: null,
   };
 }
 
@@ -57,7 +65,7 @@ export function createPaneState(id, initialPath, seeds, activeTabIdx = 0) {
   return pane;
 }
 
-const TAB_FIELDS = ['path', 'history', 'historyIdx', 'selected', 'entries', 'loading', 'filter', 'sort', 'view'];
+const TAB_FIELDS = ['path', 'history', 'historyIdx', 'selected', 'entries', 'loading', 'filter', 'sort', 'view', 'selectionAnchor', 'selectionFocus'];
 
 function hydrateFromTab(pane, tab) {
   for (const k of TAB_FIELDS) pane[k] = tab[k];
@@ -125,6 +133,8 @@ export async function loadPath(state, path) {
   state.path = norm;
   state.entries = [];
   state.selected.clear();
+  state.selectionAnchor = null;
+  state.selectionFocus = null;
   try {
     state.entries = await fs.listDir(norm, {
       signal: ac.signal,
@@ -222,6 +232,7 @@ export function renderRows(state, opts = {}) {
     // directory, silently doing the wrong thing.
     row.draggable = !inSearch;
     if (state.selected.has(it.name)) row.classList.add('row--sel');
+    if (state.selectionFocus === it.name) row.classList.add('row--focus');
     if (accent) row.style.setProperty('--row-accent', accent);
 
     const nameCell = document.createElement('span');
@@ -295,15 +306,29 @@ export function renderRows(state, opts = {}) {
     }
 
     row.addEventListener('click', (e) => {
-      if (e.shiftKey || e.metaKey || e.ctrlKey) {
+      if (e.shiftKey) {
+        // Range-extend from the anchor (last non-shift click / arrow
+        // landing). If there's no anchor yet — first click on the
+        // pane — fall back to anchoring on this row, which collapses
+        // Shift+click to a normal single-select.
+        const anchor = state.selectionAnchor || it.name;
+        selectRange(state, anchor, it.name);
+        state.selectionAnchor = anchor;
+        state.selectionFocus = it.name;
+      } else if (e.metaKey || e.ctrlKey) {
         if (state.selected.has(it.name)) state.selected.delete(it.name);
         else state.selected.add(it.name);
+        state.selectionAnchor = it.name;
+        state.selectionFocus = it.name;
       } else {
         state.selected.clear();
         state.selected.add(it.name);
+        state.selectionAnchor = it.name;
+        state.selectionFocus = it.name;
       }
       list.querySelectorAll('.row').forEach((r) => {
         r.classList.toggle('row--sel', state.selected.has(r.dataset.name));
+        r.classList.toggle('row--focus', state.selectionFocus === r.dataset.name);
       });
       // Notify the preview pane (and anything else listening for
       // selection changes) so it can refresh without a full re-render.
@@ -515,6 +540,83 @@ export function filtered(state) {
   if (!state.filter) return sorted;
   const q = state.filter.toLowerCase();
   return sorted.filter((e) => e.name.toLowerCase().includes(q));
+}
+
+// ── Phase 8d: keyboard selection ──────────────────────────────────────
+// `selectRange` replaces state.selected with [anchor..target] (inclusive)
+// in the currently-visible order (`filtered`). Used by Shift+click,
+// Shift+ArrowUp/Down, and Shift+Home/End. No-op when either endpoint
+// isn't in the visible list (e.g. anchor was filtered out).
+export function selectRange(state, anchor, target) {
+  const items = filtered(state);
+  const ai = items.findIndex((it) => it.name === anchor);
+  const ti = items.findIndex((it) => it.name === target);
+  if (ai === -1 || ti === -1) return;
+  const lo = Math.min(ai, ti);
+  const hi = Math.max(ai, ti);
+  state.selected.clear();
+  for (let i = lo; i <= hi; i++) state.selected.add(items[i].name);
+}
+
+// Select every visible entry. Anchors on the first row and focuses the
+// last so a subsequent Shift+Arrow extends from a sensible spot.
+export function selectAll(state) {
+  const items = filtered(state);
+  state.selected.clear();
+  items.forEach((it) => state.selected.add(it.name));
+  if (items.length) {
+    state.selectionAnchor = items[0].name;
+    state.selectionFocus = items[items.length - 1].name;
+  }
+}
+
+// Move the keyboard cursor by `delta` rows (+1 = down, -1 = up). When
+// `extending` is true the range stays anchored and grows / shrinks; on
+// a plain move the anchor follows the focus (single-select).
+// Returns the new focus name so callers can scroll it into view, or
+// null when nothing changed.
+export function moveSelectionByDelta(state, delta, extending) {
+  const items = filtered(state);
+  if (!items.length) return null;
+  let cur = state.selectionFocus;
+  if (!cur || !items.some((it) => it.name === cur)) {
+    cur = [...state.selected][0] || items[0].name;
+    if (!extending) state.selectionAnchor = cur;
+  }
+  const idx = items.findIndex((it) => it.name === cur);
+  const nextIdx = Math.max(0, Math.min(items.length - 1, idx + delta));
+  const next = items[nextIdx].name;
+  if (extending) {
+    const anchor = state.selectionAnchor || cur;
+    selectRange(state, anchor, next);
+    state.selectionAnchor = anchor;
+  } else {
+    state.selected.clear();
+    state.selected.add(next);
+    state.selectionAnchor = next;
+  }
+  state.selectionFocus = next;
+  return next;
+}
+
+// Jump the cursor to the first / last visible row. `boundary` is
+// 'home' or 'end'; `extending` selects [anchor..boundary] instead of
+// replacing the selection. Returns the landing name for scroll-into-view.
+export function moveSelectionToBoundary(state, boundary, extending) {
+  const items = filtered(state);
+  if (!items.length) return null;
+  const target = boundary === 'end' ? items[items.length - 1].name : items[0].name;
+  if (extending) {
+    const anchor = state.selectionAnchor || state.selectionFocus || items[0].name;
+    selectRange(state, anchor, target);
+    state.selectionAnchor = anchor;
+  } else {
+    state.selected.clear();
+    state.selected.add(target);
+    state.selectionAnchor = target;
+  }
+  state.selectionFocus = target;
+  return target;
 }
 
 // Folders cluster first; within each group entries sort by the active key.
