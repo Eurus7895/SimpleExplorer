@@ -5,15 +5,14 @@ state lives in [`design.md`](./design.md); repository conventions live
 in [`../CLAUDE.md`](../CLAUDE.md). This file is the source of truth for
 **what's painted but not wired**, and **what hasn't been started**.
 
-Status: post-MVP, pre-v1. Phases 1, 1.5, 2, 3, 4, 5, 6a, 6b, 7, 8a have
-shipped. **Phase 8b (embedded PTY terminal via ConPTY + xterm.js) was
-reverted** — see the dedicated section below — and replaced with
-three external-launcher actions (Open in Terminal / PowerShell / Cmd)
-that spawn at the active pane's path. The Workspace direction has
-been removed; the remaining directions are Fluent (A) and Cmd (B).
-Remaining Phase 8 work:
-**8c** copy/move progress + conflict UI + cancellation, **8d**
-selection keyboard ergonomics (Ctrl+A, Shift+arrows), and
+Status: post-MVP, pre-v1. Phases 1, 1.5, 2, 3, 4, 5, 6a, 6b, 7, 8a,
+8c have shipped. **Phase 8b (embedded PTY terminal via ConPTY +
+xterm.js) was reverted** — see the dedicated section below — and
+replaced with three external-launcher actions (Open in Terminal /
+PowerShell / Cmd) that spawn at the active pane's path. The
+Workspace direction has been removed; the remaining directions are
+Fluent (A) and Cmd (B). Remaining Phase 8 work:
+**8d** selection keyboard ergonomics (Ctrl+A, Shift+arrows), and
 **8e** in-app dialogs to replace the native `prompt()` /
 `confirm()` that breaks the Mica chrome. After that,
 **Phase 9 Crew (Copilot CLI) integration** (shell out to the
@@ -845,29 +844,37 @@ Shipped on `feat/phase-8b-pty-terminal`:
   the PTY) — the v1 client-side fakes are gone. vim, less,
   top, ssh password prompts, and tab completion all work.
 
-#### 8c — Copy/move polish: progress, conflict, cancel (~2 days)
+#### ~~8c — Copy/move polish: progress, conflict, cancel~~ (shipped)
 
-Today a multi-GB drag silently blocks the UI; a same-name drop
-silently overwrites; there's no cancel. All three are foot-guns
-on real-Windows usage.
+`src/transfer.js` (new) owns the multi-item state machine. It
+loops over `[{src, dst}]` calling `fs.copy` / `fs.move` per item,
+pre-checks destination existence with the new `fs.pathExists`
+helper, and surfaces a conflict modal (Skip / Replace / Keep Both
+/ Cancel) when the destination already exists. "Apply to all"
+caches the user's choice for the remaining items. "Replace"
+deletes the existing entry via `fs.deletePermanent` before the op;
+"Keep Both" probes `name (2).ext`, `name (3).ext`, … via
+`fs.pathExists` until a free name is found.
 
-- **Progress overlay.** A small toast/strip at the bottom of the
-  active pane shows N of M items copied/moved with a byte
-  progress bar. Wired into both internal pane DnD and foreign
-  Explorer-drop paths (the `onDrop` / `onForeignDrop` handlers in
-  `app.js`). The strip is dismissible and auto-fades on
-  completion.
-- **Conflict resolution.** When the destination already has a
-  same-named entry, raise a small modal: Skip / Replace / Keep
-  Both (auto-rename to `name (2).ext`) / Cancel. "Apply to all"
-  checkbox to handle large batches. Default action: Skip
-  (safest); Enter binds to the highlighted button.
-- **Cancellation.** Each in-flight operation gets an
-  AbortController; the progress strip's × button signals it. The
-  copy loop checks the signal between files. Partial state is
-  left as-is (no rollback in v1) — the user can finish manually.
-- Out of scope: pause/resume, post-completion "show in Explorer"
-  hint, copy-to-clipboard-then-paste flow (separate phase).
+The progress strip lives on `document.body` (so the full `render()`
+cycle that wipes `#root` doesn't blow it away mid-transfer). It
+shows "Copying N of M — currentName", a per-item progress bar, a
+"X MB transferred" line lazily summed from each item's post-op
+`getStats`, and an × button wired to an `AbortController` whose
+signal is checked between items. After the loop finishes the
+strip flips to a summary line ("Moved 7 · skipped 2 · 1 failed")
+and auto-fades after 4 s.
+
+All three call sites in `app.js` (`onDrop`, `onForeignDrop`,
+`doAction('copy' | 'move')`) now route through `runTransfer`
+instead of looping directly over `fs.copy / fs.move`. The
+`onDone` callback handles the source/destination reload + pane
+focus shift that the previous inline loops did synchronously.
+
+Out of scope (as planned): pause/resume, post-completion "show
+in Explorer" hint, copy-to-clipboard-then-paste flow, recursive
+byte-total precompute for folders (we report bytes lazily off
+each item's post-op stat — no pre-walk).
 
 #### 8d — Selection keyboard ergonomics (~1 day)
 
@@ -1070,6 +1077,26 @@ flags.
 
 ## Open questions / debt
 
+- **Context menu overflows the viewport.** With many installed shell
+  extensions (Bosch File Services, FastSearch, SWB-Shell, IntelliJ,
+  Git, 7-Zip, Toolbase, TortoiseSVN, …) the right-click menu can be
+  taller than the window and gets clipped at the bottom — entries
+  below the fold are unreachable. No max-height / overflow scroll
+  on `.context-menu`; the open-anchor logic in `showContextMenu`
+  / `showFolderContextMenu` checks horizontal overflow but not
+  vertical. Fix: cap menu height at `viewport - 16 px`, add
+  `overflow-y: auto`, and flip the anchor upward when
+  `menu.bottom > viewport.height`. Same fix applies to submenus.
+- **Shell-extension load can stall the menu.** `helperMenu` walks
+  `IContextMenu` for every installed extension; a slow / RPC-heavy
+  extension can hold up the whole right-click for seconds. The
+  Phase 1.5 spec called for a 1 s watchdog returning partial
+  results plus an optional per-CLSID skip-list in
+  `neutralino.config.json` — neither is wired today. The helper
+  also doesn't cache per-CLSID timings so repeat slowness can't
+  be predicted away. Tracked separately from the menu-overflow
+  fix because it needs `tools/shellhelp.cpp` changes + a CI
+  helper rebuild.
 - **`extras/shellhelp.exe`** isn't compiled yet. Until you have MSVC
   installed and run `scripts/run.ps1` once, Properties / Delete /
   drives stay on the slow PowerShell path.
