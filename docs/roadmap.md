@@ -1070,6 +1070,26 @@ flags.
 
 ## Open questions / debt
 
+- **Context menu overflows the viewport.** With many installed shell
+  extensions (Bosch File Services, FastSearch, SWB-Shell, IntelliJ,
+  Git, 7-Zip, Toolbase, TortoiseSVN, …) the right-click menu can be
+  taller than the window and gets clipped at the bottom — entries
+  below the fold are unreachable. No max-height / overflow scroll
+  on `.context-menu`; the open-anchor logic in `showContextMenu`
+  / `showFolderContextMenu` checks horizontal overflow but not
+  vertical. Fix: cap menu height at `viewport - 16 px`, add
+  `overflow-y: auto`, and flip the anchor upward when
+  `menu.bottom > viewport.height`. Same fix applies to submenus.
+- **Shell-extension load can stall the menu.** `helperMenu` walks
+  `IContextMenu` for every installed extension; a slow / RPC-heavy
+  extension can hold up the whole right-click for seconds. The
+  Phase 1.5 spec called for a 1 s watchdog returning partial
+  results plus an optional per-CLSID skip-list in
+  `neutralino.config.json` — neither is wired today. The helper
+  also doesn't cache per-CLSID timings so repeat slowness can't
+  be predicted away. Tracked separately from the menu-overflow
+  fix because it needs `tools/shellhelp.cpp` changes + a CI
+  helper rebuild.
 - **`extras/shellhelp.exe`** isn't compiled yet. Until you have MSVC
   installed and run `scripts/run.ps1` once, Properties / Delete /
   drives stay on the slow PowerShell path.
