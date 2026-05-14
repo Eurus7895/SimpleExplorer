@@ -412,6 +412,16 @@ export async function move(from, to) {
   await N.filesystem.move(from, to);
 }
 
+// True when `path` resolves to an existing file or directory.
+// Callers use this for conflict detection (the transfer pipeline)
+// and unique-name probing ("Keep Both"). Mock mode always reports
+// missing — the SAMPLE table is in-memory only.
+export async function pathExists(path) {
+  if (!N) return false;
+  try { await N.filesystem.getStats(path); return true; }
+  catch { return false; }
+}
+
 // Send a path to the Recycle Bin. Prefers the native helper (one
 // IFileOperation call, ~50 ms); falls back to PowerShell +
 // Microsoft.VisualBasic.FileIO when the helper hasn't been built yet

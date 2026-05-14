@@ -10,6 +10,7 @@ import { LAYOUT_DEFS, DEFAULT_SPLITS } from './layout.js';
 import { openPalette, isPaletteOpen } from './palette.js';
 import { recursiveSearch } from './search.js';
 import { ensurePreviewPanel, bindPreviewClose, showPreviewFor } from './preview.js';
+import { runTransfer } from './transfer.js';
 
 // Boot the Neutralino client. Safe to call before DOM ready; APIs queue until
 // the runtime handshake completes. No-op when running directly in a browser
@@ -249,15 +250,20 @@ function render() {
       if (srcIdx === dstIdx || !names?.length) return;
       const src = panes[srcIdx];
       const dst = panes[dstIdx];
-      const fn = op === 'copy' ? fs.copy : fs.move;
-      for (const name of names) {
-        try { await fn(fs.joinPath(src.path, name), fs.joinPath(dst.path, name)); }
-        catch (e) { console.warn(`${op} failed for ${name}:`, e); }
-      }
-      await Promise.all([safeLoad(src), safeLoad(dst)]);
-      activePane = dstIdx;
-      saveTabs();
-      render();
+      const items = names.map((name) => ({
+        src: fs.joinPath(src.path, name),
+        dst: fs.joinPath(dst.path, name),
+      }));
+      await runTransfer({
+        op,
+        items,
+        onDone: async () => {
+          await Promise.all([safeLoad(src), safeLoad(dst)]);
+          activePane = dstIdx;
+          saveTabs();
+          render();
+        },
+      });
     },
     // Drops from stock Explorer (or any source that exposes text/uri-list).
     // Each source path is copied/moved into the destination pane keeping
@@ -266,16 +272,17 @@ function render() {
     onForeignDrop: async (dstIdx, paths, op) => {
       if (!paths?.length) return;
       const dst = panes[dstIdx];
-      const fn = op === 'copy' ? fs.copy : fs.move;
-      for (const src of paths) {
-        const target = fs.joinPath(dst.path, fs.basename(src));
-        try { await fn(src, target); }
-        catch (e) { console.warn(`foreign ${op} ${src} -> ${target}:`, e); }
-      }
-      await safeLoad(dst);
-      activePane = dstIdx;
-      saveTabs();
-      render();
+      const items = paths.map((p) => ({ src: p, dst: fs.joinPath(dst.path, fs.basename(p)) }));
+      await runTransfer({
+        op,
+        items,
+        onDone: async () => {
+          await safeLoad(dst);
+          activePane = dstIdx;
+          saveTabs();
+          render();
+        },
+      });
     },
     rerender: render,
   };
@@ -446,13 +453,19 @@ async function doAction(action) {
     case 'move': {
       if (panes.length < 2 || !pane.selected.size) return;
       const dest = panes[(activePane + 1) % panes.length];
-      const op = action === 'copy' ? fs.copy : fs.move;
-      for (const name of pane.selected) {
-        await op(fs.joinPath(pane.path, name), fs.joinPath(dest.path, name));
-      }
-      await safeLoad(pane);
-      await safeLoad(dest);
-      render();
+      const items = [...pane.selected].map((name) => ({
+        src: fs.joinPath(pane.path, name),
+        dst: fs.joinPath(dest.path, name),
+      }));
+      await runTransfer({
+        op: action,
+        items,
+        onDone: async () => {
+          await safeLoad(pane);
+          await safeLoad(dest);
+          render();
+        },
+      });
       break;
     }
     case 'reveal': {

@@ -845,29 +845,37 @@ Shipped on `feat/phase-8b-pty-terminal`:
   the PTY) — the v1 client-side fakes are gone. vim, less,
   top, ssh password prompts, and tab completion all work.
 
-#### 8c — Copy/move polish: progress, conflict, cancel (~2 days)
+#### ~~8c — Copy/move polish: progress, conflict, cancel~~ (shipped)
 
-Today a multi-GB drag silently blocks the UI; a same-name drop
-silently overwrites; there's no cancel. All three are foot-guns
-on real-Windows usage.
+`src/transfer.js` (new) owns the multi-item state machine. It
+loops over `[{src, dst}]` calling `fs.copy` / `fs.move` per item,
+pre-checks destination existence with the new `fs.pathExists`
+helper, and surfaces a conflict modal (Skip / Replace / Keep Both
+/ Cancel) when the destination already exists. "Apply to all"
+caches the user's choice for the remaining items. "Replace"
+deletes the existing entry via `fs.deletePermanent` before the op;
+"Keep Both" probes `name (2).ext`, `name (3).ext`, … via
+`fs.pathExists` until a free name is found.
 
-- **Progress overlay.** A small toast/strip at the bottom of the
-  active pane shows N of M items copied/moved with a byte
-  progress bar. Wired into both internal pane DnD and foreign
-  Explorer-drop paths (the `onDrop` / `onForeignDrop` handlers in
-  `app.js`). The strip is dismissible and auto-fades on
-  completion.
-- **Conflict resolution.** When the destination already has a
-  same-named entry, raise a small modal: Skip / Replace / Keep
-  Both (auto-rename to `name (2).ext`) / Cancel. "Apply to all"
-  checkbox to handle large batches. Default action: Skip
-  (safest); Enter binds to the highlighted button.
-- **Cancellation.** Each in-flight operation gets an
-  AbortController; the progress strip's × button signals it. The
-  copy loop checks the signal between files. Partial state is
-  left as-is (no rollback in v1) — the user can finish manually.
-- Out of scope: pause/resume, post-completion "show in Explorer"
-  hint, copy-to-clipboard-then-paste flow (separate phase).
+The progress strip lives on `document.body` (so the full `render()`
+cycle that wipes `#root` doesn't blow it away mid-transfer). It
+shows "Copying N of M — currentName", a per-item progress bar, a
+"X MB transferred" line lazily summed from each item's post-op
+`getStats`, and an × button wired to an `AbortController` whose
+signal is checked between items. After the loop finishes the
+strip flips to a summary line ("Moved 7 · skipped 2 · 1 failed")
+and auto-fades after 4 s.
+
+All three call sites in `app.js` (`onDrop`, `onForeignDrop`,
+`doAction('copy' | 'move')`) now route through `runTransfer`
+instead of looping directly over `fs.copy / fs.move`. The
+`onDone` callback handles the source/destination reload + pane
+focus shift that the previous inline loops did synchronously.
+
+Out of scope (as planned): pause/resume, post-completion "show
+in Explorer" hint, copy-to-clipboard-then-paste flow, recursive
+byte-total precompute for folders (we report bytes lazily off
+each item's post-op stat — no pre-walk).
 
 #### 8d — Selection keyboard ergonomics (~1 day)
 
